@@ -75,7 +75,7 @@ def load_config():
 
 
 class SensorDriver:
-    """Base sensor driver with fallback synthetic generator for testing."""
+    """Multi-backend hardware sensor driver (picamera, pygame, opencv, raspistill, fallback)."""
 
     def __init__(self, sensor_cfg):
         self.cfg = sensor_cfg
@@ -86,40 +86,130 @@ class SensorDriver:
         self.height = sensor_cfg.get("height", 480)
         self.fps = sensor_cfg.get("fps", 15)
         self.device_node = sensor_cfg.get("device", "/dev/video0")
-        self.cap = None
+        self.backend = None
+        self.camera_obj = None
         self.use_fallback = False
         self._init_hardware()
 
     def _init_hardware(self):
-        # Check if hardware camera device is accessible
+        # 1. Try native Broadcom PiCamera (Raspbian Buster CSI camera)
+        try:
+            import picamera
+            self.camera_obj = picamera.PiCamera()
+            self.camera_obj.resolution = (self.width, self.height)
+            self.camera_obj.framerate = self.fps
+            time.sleep(0.5)
+            self.backend = "picamera"
+            logger.info(f"[{self.sensor_id}] Initialized native Broadcom PiCamera ({self.width}x{self.height} @ {self.fps}fps)")
+            return
+        except Exception as e:
+            logger.info(f"[{self.sensor_id}] picamera init not available: {e}")
+
+        # 2. Try Pygame V4L2 Camera (pre-installed on Buster)
+        if os.path.exists(self.device_node):
+            try:
+                import pygame.camera
+                import pygame.image
+                pygame.camera.init()
+                self.camera_obj = pygame.camera.Camera(self.device_node, (self.width, self.height))
+                self.camera_obj.start()
+                self.backend = "pygame"
+                logger.info(f"[{self.sensor_id}] Initialized Pygame V4L2 Camera on {self.device_node}")
+                return
+            except Exception as e:
+                logger.info(f"[{self.sensor_id}] Pygame camera init failed: {e}")
+
+        # 3. Try OpenCV if available
         if os.path.exists(self.device_node):
             try:
                 import cv2
-                self.cap = cv2.VideoCapture(self.device_node)
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-                if self.cap.isOpened():
-                    logger.info(f"[{self.sensor_id}] Opened hardware device {self.device_node}")
+                cap = cv2.VideoCapture(self.device_node)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                cap.set(cv2.CAP_PROP_FPS, self.fps)
+                if cap.isOpened():
+                    self.camera_obj = cap
+                    self.backend = "opencv"
+                    logger.info(f"[{self.sensor_id}] Opened OpenCV V4L2 device {self.device_node}")
                     return
             except Exception as e:
-                logger.warning(f"[{self.sensor_id}] OpenCV / V4L2 init failed on {self.device_node}: {e}")
+                logger.info(f"[{self.sensor_id}] OpenCV init failed: {e}")
 
-        logger.info(f"[{self.sensor_id}] Hardware {self.device_node} not opened. Initializing optimized fallback generator.")
+        # 4. Try raspistill CLI pipeline
+        if os.path.exists("/usr/bin/raspistill"):
+            try:
+                res = subprocess.run(["raspistill", "-n", "-t", "50", "-w", str(self.width), "-h", str(self.height), "-q", "75", "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
+                if res.returncode == 0 and len(res.stdout) > 1000:
+                    self.backend = "raspistill"
+                    logger.info(f"[{self.sensor_id}] Initialized raspistill CLI pipeline")
+                    return
+            except Exception as e:
+                logger.info(f"[{self.sensor_id}] raspistill test failed: {e}")
+
+        logger.info(f"[{self.sensor_id}] Hardware camera not opened. Using fallback generator.")
         self.use_fallback = True
 
     def get_jpeg_frame(self):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
-        if not self.use_fallback and self.cap is not None and self.cap.isOpened():
-            import cv2
-            ret, frame = self.cap.read()
-            if ret:
-                ret2, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
-                if ret2:
-                    return jpeg.tobytes()
+        if self.backend == "picamera" and self.camera_obj:
+            try:
+                stream = io.BytesIO()
+                self.camera_obj.capture(stream, format='jpeg', use_video_port=True)
+                return stream.getvalue()
+            except Exception as e:
+                logger.warning(f"picamera capture error: {e}")
+
+        elif self.backend == "pygame" and self.camera_obj:
+            try:
+                import pygame.image
+                from PIL import Image
+                img_surface = self.camera_obj.get_image()
+                raw_data = pygame.image.tostring(img_surface, 'RGB')
+                pil_img = Image.frombytes('RGB', (self.width, self.height), raw_data)
+                buf = io.BytesIO()
+                pil_img.save(buf, format='JPEG', quality=75)
+                return buf.getvalue()
+            except Exception as e:
+                logger.warning(f"pygame capture error: {e}")
+
+        elif self.backend == "opencv" and self.camera_obj:
+            try:
+                import cv2
+                ret, frame = self.camera_obj.read()
+                if ret:
+                    ret2, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
+                    if ret2:
+                        return jpeg.tobytes()
+            except Exception as e:
+                logger.warning(f"opencv capture error: {e}")
+
+        elif self.backend == "raspistill":
+            try:
+                res = subprocess.run(["raspistill", "-n", "-t", "50", "-w", str(self.width), "-h", str(self.height), "-q", "70", "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=2)
+                if res.returncode == 0:
+                    return res.stdout
+            except Exception as e:
+                pass
 
         # Fallback synthetic frame generator
         return self._generate_synthetic_frame()
+
+    def release(self):
+        if self.backend == "picamera" and self.camera_obj:
+            try:
+                self.camera_obj.close()
+            except Exception:
+                pass
+        elif self.backend == "pygame" and self.camera_obj:
+            try:
+                self.camera_obj.stop()
+            except Exception:
+                pass
+        elif self.backend == "opencv" and self.camera_obj:
+            try:
+                self.camera_obj.release()
+            except Exception:
+                pass
 
     def _generate_synthetic_frame(self):
         """Generates dynamic synthetic image with timestamp and sensor metadata."""
