@@ -166,10 +166,15 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           <h4>🌐 Edge Hub Endpoint (API & Proxy)</h4>
           <p>Specify the address of your Edge Hub or Cloudflare Tunnel that connects to your Raspberry Pi devices:</p>
           <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="http://192.168.1.100:8000">
+            <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="https://lynn-oak-loved-contain.trycloudflare.com">
             <button class="copy-btn" id="saveHubUrlBtn">Save</button>
           </div>
-          <small style="color:var(--text-muted); font-size:0.75rem;">Can be a local IP, Tailscale IP, or Cloudflare Tunnel URL.</small>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+            <button type="button" class="pill active" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('https://lynn-oak-loved-contain.trycloudflare.com')">☁️ Cloudflare Live Tunnel</button>
+            <button type="button" class="pill" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://10.97.194.138:8000')">💻 Local PC Hub</button>
+            <button type="button" class="pill" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://10.97.194.51:5001')">🍓 Direct Pi Zero</button>
+          </div>
+          <small style="color:var(--text-muted); font-size:0.75rem;">Can be a Cloudflare Tunnel URL, Local IP (e.g. 10.97.194.138:8000), or Direct Pi IP.</small>
         </div>
 
         <hr class="divider">
@@ -215,13 +220,21 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       'use strict';
 
       // Hub Endpoint detection
+      let savedHub = localStorage.getItem('capture_hub_url');
+      if (savedHub && (savedHub.includes('192.168.41.78') || savedHub.includes('192.168.1.100') || savedHub.includes('192.168.1.150'))) {
+        savedHub = null;
+        localStorage.removeItem('capture_hub_url');
+      }
+
       const defaultHub = (window.location.port === '8000') 
         ? window.location.origin 
         : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
           ? 'http://127.0.0.1:8000'
-          : localStorage.getItem('capture_hub_url') || 'http://192.168.41.78:8000';
+          : (window.location.protocol === 'https:')
+            ? 'https://lynn-oak-loved-contain.trycloudflare.com'
+            : 'http://10.97.194.138:8000';
 
-      let hubBaseUrl = localStorage.getItem('capture_hub_url') || defaultHub;
+      let hubBaseUrl = savedHub || defaultHub;
 
       const state = {
         viewMode: 'device',
@@ -317,6 +330,18 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           setTimeout(() => el.saveHubUrlBtn.textContent = 'Save', 2000);
         });
 
+        window.setQuickHub = function (url) {
+          hubBaseUrl = url;
+          localStorage.setItem('capture_hub_url', hubBaseUrl);
+          if (el.hubUrlInput) el.hubUrlInput.value = hubBaseUrl;
+          updateHubLabel();
+          pollData();
+          if (el.saveHubUrlBtn) {
+            el.saveHubUrlBtn.textContent = 'Active!';
+            setTimeout(() => el.saveHubUrlBtn.textContent = 'Save', 2000);
+          }
+        };
+
         el.addEdgeForm.addEventListener('submit', handleAddEdge);
       }
 
@@ -335,7 +360,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           el.feedsViewport.innerHTML = `
             <div class="empty-state">
               <p>Cannot reach Edge Hub at <code>${hubBaseUrl}</code></p>
-              <button class="submit-btn" onclick="document.getElementById('hubConfigBadge').click()">Configure Endpoint</button>
+              <div style="display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap;">
+                <button class="submit-btn" onclick="window.setQuickHub('https://lynn-oak-loved-contain.trycloudflare.com')">Connect Live Cloudflare Tunnel</button>
+                <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('hubConfigBadge').click()">Configure Endpoint</button>
+              </div>
             </div>
           `;
         }

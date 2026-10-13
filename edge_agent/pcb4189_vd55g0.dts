@@ -1,0 +1,112 @@
+/dts-v1/;
+/plugin/;
+
+/{
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&i2c_csi_dsi>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			vd55g0: vd55g0@10 {
+				compatible = "st,vd55g0";
+				reg = <0x10>;
+				status = "okay";
+
+				clocks = <&vd55g0_clk>;
+				clock-names = "xclk";
+
+				VANA-supply = <&cam1_reg>;
+				VDDIO-supply = <&vd55g0_vddio>;
+				VCORE-supply = <&vd55g0_vcore>;
+
+				rotation = <0>;
+				orientation = <2>;
+
+				port {
+					cam_endpoint: endpoint {
+						clock-lanes = <0>;
+						data-lanes = <1>;
+						clock-noncontinuous;
+						link-frequencies = /bits/ 64 <201000000 402000000 804000000>;
+						lane-polarities = <1 1>;
+						remote-endpoint = <&csi_ep>;
+					};
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&csi1>;
+		__overlay__ {
+			status = "okay";
+
+			port {
+				csi_ep: endpoint {
+					remote-endpoint = <&cam_endpoint>;
+					clock-lanes = <0>;
+					data-lanes = <1>;
+					clock-noncontinuous;
+				};
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&i2c0if>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@3 {
+		target-path = "/";
+		__overlay__ {
+			vd55g0_vddio: fixedregulator@1 {
+				compatible = "regulator-fixed";
+				regulator-name = "vd55g0_vddio";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
+
+			vd55g0_vcore: fixedregulator@2 {
+				compatible = "regulator-fixed";
+				regulator-name = "vd55g0_vcore";
+				regulator-min-microvolt = <1200000>;
+				regulator-max-microvolt = <1200000>;
+			};
+
+			vd55g0_clk: camera-clk {
+				compatible = "fixed-clock";
+				#clock-cells = <0>;
+				clock-frequency = <12000000>;
+			};
+		};
+	};
+
+	fragment@4 {
+		target = <&i2c0mux>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@5 {
+		target = <&cam1_reg>;
+		__overlay__ {
+			status = "okay";
+			regulator-name = "vd55g0_vana";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+		};
+	};
+
+	__overrides__ {
+		rotation = <&vd55g0>,"rotation:0";
+		orientation = <&vd55g0>,"orientation:0";
+	};
+};

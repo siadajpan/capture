@@ -42,6 +42,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_pna_header(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = JSONResponse(content={})
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, DELETE"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
 # Registry of known edge devices
 # key: device_id
 known_edges: Dict[str, Dict[str, Any]] = {}

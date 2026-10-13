@@ -92,7 +92,35 @@ class SensorDriver:
         self._init_hardware()
 
     def _init_hardware(self):
-        # 1. Try native Broadcom PiCamera (Raspbian Buster CSI camera)
+        # 1. Try direct V4L2 stream via v4l2-ctl (best for Unicam / VD55G0 global shutter monochrome)
+        if os.path.exists(self.device_node):
+            try:
+                frame_size = self.width * self.height
+                self.v4l2_proc = subprocess.Popen(
+                    ["v4l2-ctl", "-d", self.device_node, "--stream-mmap", "--stream-to=-"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=frame_size * 2
+                )
+                test_frame = self.v4l2_proc.stdout.read(frame_size)
+                if len(test_frame) == frame_size:
+                    self.backend = "v4l2_pipe"
+                    from PIL import Image
+                    img = Image.frombytes('L', (self.width, self.height), test_frame).convert('RGB')
+                    buf = io.BytesIO()
+                    img.save(buf, format='JPEG', quality=75)
+                    self.latest_jpeg = buf.getvalue()
+                    self._stop_stream = False
+                    self.stream_thread = threading.Thread(target=self._v4l2_read_loop, daemon=True)
+                    self.stream_thread.start()
+                    logger.info(f"[{self.sensor_id}] Initialized direct V4L2 streaming on {self.device_node} ({self.width}x{self.height})")
+                    return
+                else:
+                    self.v4l2_proc.terminate()
+            except Exception as e:
+                logger.info(f"[{self.sensor_id}] V4L2 stream pipe init failed: {e}")
+
+        # 2. Try native Broadcom PiCamera (Raspbian Buster CSI camera)
         try:
             import picamera
             self.camera_obj = picamera.PiCamera()
@@ -105,7 +133,7 @@ class SensorDriver:
         except Exception as e:
             logger.info(f"[{self.sensor_id}] picamera init not available: {e}")
 
-        # 2. Try Pygame V4L2 Camera (pre-installed on Buster)
+        # 3. Try Pygame V4L2 Camera (pre-installed on Buster)
         if os.path.exists(self.device_node):
             try:
                 import pygame.camera
@@ -119,7 +147,7 @@ class SensorDriver:
             except Exception as e:
                 logger.info(f"[{self.sensor_id}] Pygame camera init failed: {e}")
 
-        # 3. Try OpenCV if available
+        # 4. Try OpenCV if available
         if os.path.exists(self.device_node):
             try:
                 import cv2
@@ -135,7 +163,7 @@ class SensorDriver:
             except Exception as e:
                 logger.info(f"[{self.sensor_id}] OpenCV init failed: {e}")
 
-        # 4. Try raspistill CLI pipeline
+        # 5. Try raspistill CLI pipeline
         if os.path.exists("/usr/bin/raspistill"):
             try:
                 res = subprocess.run(["raspistill", "-n", "-t", "50", "-w", str(self.width), "-h", str(self.height), "-q", "75", "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
@@ -149,9 +177,30 @@ class SensorDriver:
         logger.info(f"[{self.sensor_id}] Hardware camera not opened. Using fallback generator.")
         self.use_fallback = True
 
+    def _v4l2_read_loop(self):
+        from PIL import Image
+        frame_size = self.width * self.height
+        while not getattr(self, "_stop_stream", False) and self.v4l2_proc and self.v4l2_proc.poll() is None:
+            try:
+                raw = self.v4l2_proc.stdout.read(frame_size)
+                if len(raw) < frame_size:
+                    time.sleep(0.01)
+                    continue
+                img = Image.frombytes('L', (self.width, self.height), raw).convert('RGB')
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=75)
+                self.latest_jpeg = buf.getvalue()
+            except Exception:
+                time.sleep(0.02)
+
     def get_jpeg_frame(self):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
-        if self.backend == "picamera" and self.camera_obj:
+        if self.backend == "v4l2_pipe":
+            jpeg = getattr(self, "latest_jpeg", None)
+            if jpeg:
+                return jpeg
+
+        elif self.backend == "picamera" and self.camera_obj:
             try:
                 stream = io.BytesIO()
                 self.camera_obj.capture(stream, format='jpeg', use_video_port=True)
@@ -195,7 +244,13 @@ class SensorDriver:
         return self._generate_synthetic_frame()
 
     def release(self):
-        if self.backend == "picamera" and self.camera_obj:
+        if self.backend == "v4l2_pipe" and getattr(self, "v4l2_proc", None):
+            self._stop_stream = True
+            try:
+                self.v4l2_proc.terminate()
+            except Exception:
+                pass
+        elif self.backend == "picamera" and self.camera_obj:
             try:
                 self.camera_obj.close()
             except Exception:
@@ -208,6 +263,8 @@ class SensorDriver:
         elif self.backend == "opencv" and self.camera_obj:
             try:
                 self.camera_obj.release()
+            except Exception:
+                pass
             except Exception:
                 pass
 
@@ -455,6 +512,16 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
 
         if path == "/" or path == "/api/status":
             self._handle_status()
+        elif path == "/api/edges":
+            self._handle_edges()
+        elif path.startswith("/proxy/stream/"):
+            parts = [p for p in path.split("/proxy/stream/")[1].split("/") if p]
+            target = parts[-1] if parts else "rgb"
+            self._handle_mjpeg_stream(target)
+        elif path.startswith("/proxy/snapshot/"):
+            parts = [p for p in path.split("/proxy/snapshot/")[1].split("/") if p]
+            target = parts[-1] if parts else "rgb"
+            self._handle_snapshot(target)
         elif path.startswith("/api/stream/"):
             # Stream path: /api/stream/<modality> or /api/stream/<sensor_id>
             target = path.split("/api/stream/")[1]
@@ -472,6 +539,14 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._handle_list_sessions()
         else:
             self.send_error(404, "Not Found")
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -492,6 +567,8 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         elif path == "/api/collection/stop":
             res = self.daemon_ref.collector.stop_collection()
             self._send_json(res)
+        elif path == "/api/display/toggle":
+            self._send_json({"display_enabled": True})
         else:
             self.send_error(404, "Not Found")
 
@@ -500,9 +577,37 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_edges(self):
+        sensor_info = [
+            {
+                "id": s.sensor_id,
+                "modality": s.modality,
+                "name": s.name,
+                "resolution": f"{s.width}x{s.height}",
+                "fps": s.fps
+            }
+            for s in self.daemon_ref.sensors
+        ]
+        edges_data = {
+            "display_enabled": True,
+            "edges": [{
+                "device_id": self.daemon_ref.config.get("device_id", "edge-pi-zero-01"),
+                "device_name": self.daemon_ref.config.get("device_name", "Raspberry Pi Zero (STEVAL-55G0MBI)"),
+                "host": self.daemon_ref.config.get("host", "0.0.0.0"),
+                "port": int(self.daemon_ref.config.get("port", 5001)),
+                "online": True,
+                "last_seen": time.time(),
+                "sensors": sensor_info,
+                "modalities": list(set(s.modality for s in self.daemon_ref.sensors)),
+                "collection": self.daemon_ref.collector.get_status()
+            }]
+        }
+        self._send_json(edges_data)
 
     def _handle_status(self):
         collector_status = self.daemon_ref.collector.get_status()

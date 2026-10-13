@@ -29,3 +29,5 @@ __pycache__/
 *.pyc
 data_storage/
 .system_generated/
+*.jpg
+cloudflared.exe
