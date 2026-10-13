@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "astro dev --host",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "deploy": "astro build && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.109.0"
   },
   "dependencies": {
     "astro": "^5.2.6"
