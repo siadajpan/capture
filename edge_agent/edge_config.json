@@ -1,0 +1,20 @@
+{
+  "device_id": "edge-pi-zero-01",
+  "device_name": "Raspberry Pi Zero v1.1 (Lab)",
+  "host": "0.0.0.0",
+  "port": 5001,
+  "storage_root": "/home/pi/edge_data",
+  "server_url": "http://192.168.1.100:8000",
+  "sensors": [
+    {
+      "id": "rgb-steval",
+      "modality": "rgb",
+      "name": "STEVAL-55G0MBI PCB4189D (VD55G0)",
+      "type": "v4l2",
+      "device": "/dev/video0",
+      "width": 640,
+      "height": 480,
+      "fps": 15
+    }
+  ]
+}

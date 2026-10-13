@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Edge Sensor Hub | Multi-Device Recorder</title>
+  <meta name="description" content="Mobile-friendly dashboard to monitor and synchronize recording across multi-sensor edge devices.">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Bar -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="brand-badge">
+          <div class="pulse-dot"></div>
+          <span class="brand-title">EDGE HUB</span>
+        </div>
+        <div class="network-badge" id="networkInfoBadge" title="Click to view Mobile Phone Connection info">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <circle cx="12" cy="20" r="1"></circle>
+          </svg>
+          <span id="serverIpLabel">Connecting...</span>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button class="icon-btn" id="openAddDeviceBtn" title="Add / Manage Edge Devices">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span class="btn-text">Edges (<span id="edgeCountBadge">0</span>)</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Master Control HUD -->
+    <section class="master-hud">
+      <div class="hud-status-row">
+        <div class="recording-indicator-box" id="recStatusBox">
+          <div class="rec-led" id="recLed"></div>
+          <div class="rec-info">
+            <div class="rec-title" id="recStateText">IDLE - READY</div>
+            <div class="rec-timer" id="recTimerText">00:00:00</div>
+          </div>
+        </div>
+
+        <div class="hud-stat-chips">
+          <div class="chip">
+            <span class="chip-label">Active Sensors</span>
+            <span class="chip-val" id="totalSensorsCount">0</span>
+          </div>
+          <div class="chip">
+            <span class="chip-label">Edges Online</span>
+            <span class="chip-val text-accent" id="onlineEdgesCount">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons Required by User -->
+      <div class="hud-buttons-grid">
+        <!-- Button 1: Display Data / Live View Toggle -->
+        <button id="toggleDisplayBtn" class="action-btn display-btn active">
+          <div class="btn-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </div>
+          <div class="btn-labels">
+            <span class="primary-text" id="displayBtnText">DISPLAY FEEDS: ON</span>
+            <span class="sub-text">Live streams visible</span>
+          </div>
+        </button>
+
+        <!-- Button 2: Collect Feeds (Internal Edge Storage) -->
+        <button id="toggleCollectBtn" class="action-btn record-btn">
+          <div class="btn-icon">
+            <div class="record-symbol"></div>
+          </div>
+          <div class="btn-labels">
+            <span class="primary-text" id="collectBtnText">COLLECT FEEDS</span>
+            <span class="sub-text" id="collectSubText">Record to internal edge storage</span>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <!-- View Mode Switcher -->
+    <div class="view-switcher-bar">
+      <div class="segmented-control">
+        <button id="viewByDeviceBtn" class="seg-btn active">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+          <span>By Device</span>
+        </button>
+        <button id="viewByModalityBtn" class="seg-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+          <span>Grouped by Modality</span>
+        </button>
+      </div>
+
+      <div class="filter-pills" id="modalityPillsBar" style="display: none;">
+        <button class="pill active" data-mod="all">All</button>
+        <button class="pill" data-mod="rgb">RGB</button>
+        <button class="pill" data-mod="thermal">Thermal</button>
+        <button class="pill" data-mod="depth">Depth</button>
+      </div>
+    </div>
+
+    <!-- Main Dynamic Feed Container -->
+    <main class="feeds-viewport" id="feedsViewport">
+      <!-- Injected by JavaScript -->
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>Connecting to Edge Devices...</p>
+      </div>
+    </main>
+
+    <!-- Storage Path Spec Footer Note -->
+    <footer class="app-footer">
+      <div class="storage-info-bar">
+        <span class="badge-tag">EDGE STORAGE PATTERN</span>
+        <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Device Management / Mobile Info Modal -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalTitle">Edge Devices & Phone Setup</h3>
+        <button class="close-btn" id="closeModalBtn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="phone-connect-box">
+          <h4>📱 Connect from your Phone</h4>
+          <p>Make sure your phone is connected to the same Wi-Fi / Hotspot, then open in your mobile browser:</p>
+          <div class="url-copy-box">
+            <code id="phoneUrlDisplay">http://localhost:8000</code>
+            <button class="copy-btn" id="copyUrlBtn">Copy</button>
+          </div>
+        </div>
+
+        <hr class="divider">
+
+        <h4>Add New Edge Device</h4>
+        <form id="addEdgeForm" class="add-edge-form">
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label>Device Name / Label</label>
+              <input type="text" id="edgeNameInput" placeholder="e.g. Raspberry Pi Zero (Front)" required>
+            </div>
+            <div class="form-group flex-1">
+              <label>Device ID</label>
+              <input type="text" id="edgeIdInput" placeholder="e.g. edge-pi-02" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label>IP Address / Hostname</label>
+              <input type="text" id="edgeHostInput" placeholder="192.168.1.150" required>
+            </div>
+            <div class="form-group flex-1">
+              <label>Port</label>
+              <input type="number" id="edgePortInput" value="5001" required>
+            </div>
+          </div>
+          <button type="submit" class="submit-btn">+ Add Edge Device</button>
+        </form>
+
+        <hr class="divider">
+
+        <h4>Configured Edge Devices</h4>
+        <div class="edge-list-container" id="edgeListContainer">
+          <!-- Injected dynamically -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

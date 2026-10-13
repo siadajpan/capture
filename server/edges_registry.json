@@ -1,0 +1,37 @@
+{
+  "edges": {
+    "edge-pi-zero-01": {
+      "device_id": "edge-pi-zero-01",
+      "device_name": "Raspberry Pi Zero v1.1 (STEVAL-55G0MBI)",
+      "host": "127.0.0.1",
+      "port": 5001,
+      "url": "http://127.0.0.1:5001",
+      "online": false,
+      "last_seen": 0,
+      "sensors": [],
+      "collection": {}
+    },
+    "edge-multimodal-02": {
+      "device_id": "edge-multimodal-02",
+      "device_name": "Edge Rig B (RGB + Thermal + Depth)",
+      "host": "127.0.0.1",
+      "port": 5002,
+      "url": "http://127.0.0.1:5002",
+      "online": false,
+      "last_seen": 0,
+      "sensors": [],
+      "collection": {}
+    },
+    "edge-stereo-03": {
+      "device_id": "edge-stereo-03",
+      "device_name": "Edge Rig C (Stereo RGB)",
+      "host": "127.0.0.1",
+      "port": 5003,
+      "url": "http://127.0.0.1:5003",
+      "online": false,
+      "last_seen": 0,
+      "sensors": [],
+      "collection": {}
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "capture",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Multi-Sensor Edge Capture Platform - capture.me.uk",
+  "scripts": {
+    "dev": "astro dev --host",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^5.2.6"
+  }
+}

@@ -1,0 +1,636 @@
+---
+import '../styles/global.css';
+
+const title = "CAPTURE.ME.UK | Multi-Sensor Edge Collector";
+const description = "Cloudflare-hosted mobile dashboard to monitor live streams and synchronize recording across multi-sensor edge devices.";
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>{title}</title>
+  <meta name="description" content={description}>
+  <meta name="theme-color" content="#00e5ff">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Bar -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="brand-badge">
+          <div class="pulse-dot"></div>
+          <span class="brand-title">CAPTURE</span>
+          <span class="domain-tag">capture.me.uk</span>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <div class="network-badge" id="hubConfigBadge" title="Configure Hub / Edge Endpoint URL">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <circle cx="12" cy="20" r="1"></circle>
+          </svg>
+          <span id="hubHostLabel">Local Hub</span>
+        </div>
+
+        <button class="icon-btn" id="openAddDeviceBtn" title="Edge Devices Management">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span class="btn-text">Edges (<span id="edgeCountBadge">0</span>)</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Master Control HUD -->
+    <section class="master-hud">
+      <div class="hud-status-row">
+        <div class="recording-indicator-box" id="recStatusBox">
+          <div class="rec-led" id="recLed"></div>
+          <div class="rec-info">
+            <div class="rec-title" id="recStateText">IDLE - READY</div>
+            <div class="rec-timer" id="recTimerText">00:00:00</div>
+          </div>
+        </div>
+
+        <div class="hud-stat-chips">
+          <div class="chip">
+            <span class="chip-label">Active Sensors</span>
+            <span class="chip-val" id="totalSensorsCount">0</span>
+          </div>
+          <div class="chip">
+            <span class="chip-label">Edges Online</span>
+            <span class="chip-val text-accent" id="onlineEdgesCount">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Buttons Required by User -->
+      <div class="hud-buttons-grid">
+        <!-- Button 1: Display Feeds / Live View Toggle -->
+        <button id="toggleDisplayBtn" class="action-btn display-btn active">
+          <div class="btn-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </div>
+          <div class="btn-labels">
+            <span class="primary-text" id="displayBtnText">DISPLAY FEEDS: ON</span>
+            <span class="sub-text">Live streams visible</span>
+          </div>
+        </button>
+
+        <!-- Button 2: Collect Feeds (Internal Edge Storage) -->
+        <button id="toggleCollectBtn" class="action-btn record-btn">
+          <div class="btn-icon">
+            <div class="record-symbol"></div>
+          </div>
+          <div class="btn-labels">
+            <span class="primary-text" id="collectBtnText">COLLECT FEEDS</span>
+            <span class="sub-text" id="collectSubText">Record to internal edge storage</span>
+          </div>
+        </button>
+      </div>
+    </section>
+
+    <!-- View Mode Switcher -->
+    <div class="view-switcher-bar">
+      <div class="segmented-control">
+        <button id="viewByDeviceBtn" class="seg-btn active">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+          <span>By Device</span>
+        </button>
+        <button id="viewByModalityBtn" class="seg-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+          <span>Grouped by Modality</span>
+        </button>
+      </div>
+
+      <div class="filter-pills" id="modalityPillsBar" style="display: none;">
+        <button class="pill active" data-mod="all">All</button>
+        <button class="pill" data-mod="rgb">RGB</button>
+        <button class="pill" data-mod="thermal">Thermal</button>
+        <button class="pill" data-mod="depth">Depth</button>
+      </div>
+    </div>
+
+    <!-- Main Dynamic Feed Container -->
+    <main class="feeds-viewport" id="feedsViewport">
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>Connecting to Edge Devices via capture.me.uk...</p>
+      </div>
+    </main>
+
+    <!-- Storage Pattern Footer -->
+    <footer class="app-footer">
+      <div class="storage-info-bar">
+        <span class="badge-tag">EDGE STORAGE PATTERN</span>
+        <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Settings & Device Management Modal -->
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modalTitle">capture.me.uk &bull; Hub & Edge Settings</h3>
+        <button class="close-btn" id="closeModalBtn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="phone-connect-box">
+          <h4>🌐 Edge Hub Endpoint (API & Proxy)</h4>
+          <p>Specify the address of your Edge Hub or Cloudflare Tunnel that connects to your Raspberry Pi devices:</p>
+          <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="http://192.168.1.100:8000">
+            <button class="copy-btn" id="saveHubUrlBtn">Save</button>
+          </div>
+          <small style="color:var(--text-muted); font-size:0.75rem;">Can be a local IP, Tailscale IP, or Cloudflare Tunnel URL.</small>
+        </div>
+
+        <hr class="divider">
+
+        <h4>Add New Edge Device</h4>
+        <form id="addEdgeForm" class="add-edge-form">
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label>Device Name / Label</label>
+              <input type="text" id="edgeNameInput" placeholder="Raspberry Pi Zero v1.1 (Lab)" required>
+            </div>
+            <div class="form-group flex-1">
+              <label>Device ID</label>
+              <input type="text" id="edgeIdInput" placeholder="edge-pi-zero-01" required>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group flex-2">
+              <label>IP Address / Hostname</label>
+              <input type="text" id="edgeHostInput" placeholder="192.168.1.150" required>
+            </div>
+            <div class="form-group flex-1">
+              <label>Port</label>
+              <input type="number" id="edgePortInput" value="5001" required>
+            </div>
+          </div>
+          <button type="submit" class="submit-btn">+ Add Edge Device</button>
+        </form>
+
+        <hr class="divider">
+
+        <h4>Connected Edge Nodes</h4>
+        <div class="edge-list-container" id="edgeListContainer">
+          <!-- Injected dynamically -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Client-Side Dashboard Script -->
+  <script is:inline>
+    (function () {
+      'use strict';
+
+      // Hub Endpoint detection
+      const defaultHub = (window.location.port === '8000') 
+        ? window.location.origin 
+        : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+          ? 'http://127.0.0.1:8000'
+          : localStorage.getItem('capture_hub_url') || 'http://192.168.41.78:8000';
+
+      let hubBaseUrl = localStorage.getItem('capture_hub_url') || defaultHub;
+
+      const state = {
+        viewMode: 'device',
+        selectedModalityFilter: 'all',
+        displayEnabled: true,
+        isRecording: false,
+        edges: [],
+        pollTimer: null
+      };
+
+      const el = {
+        hubHostLabel: document.getElementById('hubHostLabel'),
+        hubConfigBadge: document.getElementById('hubConfigBadge'),
+        hubUrlInput: document.getElementById('hubUrlInput'),
+        saveHubUrlBtn: document.getElementById('saveHubUrlBtn'),
+        edgeCountBadge: document.getElementById('edgeCountBadge'),
+        onlineEdgesCount: document.getElementById('onlineEdgesCount'),
+        totalSensorsCount: document.getElementById('totalSensorsCount'),
+
+        recStatusBox: document.getElementById('recStatusBox'),
+        recStateText: document.getElementById('recStateText'),
+        recTimerText: document.getElementById('recTimerText'),
+        toggleDisplayBtn: document.getElementById('toggleDisplayBtn'),
+        displayBtnText: document.getElementById('displayBtnText'),
+        toggleCollectBtn: document.getElementById('toggleCollectBtn'),
+        collectBtnText: document.getElementById('collectBtnText'),
+        collectSubText: document.getElementById('collectSubText'),
+
+        viewByDeviceBtn: document.getElementById('viewByDeviceBtn'),
+        viewByModalityBtn: document.getElementById('viewByModalityBtn'),
+        modalityPillsBar: document.getElementById('modalityPillsBar'),
+        feedsViewport: document.getElementById('feedsViewport'),
+
+        modalBackdrop: document.getElementById('modalBackdrop'),
+        openAddDeviceBtn: document.getElementById('openAddDeviceBtn'),
+        closeModalBtn: document.getElementById('closeModalBtn'),
+        addEdgeForm: document.getElementById('addEdgeForm'),
+        edgeNameInput: document.getElementById('edgeNameInput'),
+        edgeIdInput: document.getElementById('edgeIdInput'),
+        edgeHostInput: document.getElementById('edgeHostInput'),
+        edgePortInput: document.getElementById('edgePortInput'),
+        edgeListContainer: document.getElementById('edgeListContainer')
+      };
+
+      function init() {
+        el.hubUrlInput.value = hubBaseUrl;
+        updateHubLabel();
+        bindEvents();
+        pollData();
+        state.pollTimer = setInterval(pollData, 1800);
+      }
+
+      function updateHubLabel() {
+        try {
+          const u = new URL(hubBaseUrl);
+          el.hubHostLabel.textContent = u.host;
+        } catch {
+          el.hubHostLabel.textContent = hubBaseUrl;
+        }
+      }
+
+      function bindEvents() {
+        el.toggleDisplayBtn.addEventListener('click', toggleDisplay);
+        el.toggleCollectBtn.addEventListener('click', toggleCollection);
+
+        el.viewByDeviceBtn.addEventListener('click', () => switchViewMode('device'));
+        el.viewByModalityBtn.addEventListener('click', () => switchViewMode('modality'));
+
+        el.modalityPillsBar.addEventListener('click', (e) => {
+          const btn = e.target.closest('.pill');
+          if (!btn) return;
+          document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          state.selectedModalityFilter = btn.dataset.mod;
+          renderFeeds();
+        });
+
+        el.openAddDeviceBtn.addEventListener('click', () => el.modalBackdrop.classList.add('open'));
+        el.hubConfigBadge.addEventListener('click', () => el.modalBackdrop.classList.add('open'));
+        el.closeModalBtn.addEventListener('click', () => el.modalBackdrop.classList.remove('open'));
+        el.modalBackdrop.addEventListener('click', (e) => {
+          if (e.target === el.modalBackdrop) el.modalBackdrop.classList.remove('open');
+        });
+
+        el.saveHubUrlBtn.addEventListener('click', () => {
+          let val = el.hubUrlInput.value.trim();
+          if (val && !val.startsWith('http')) val = 'http://' + val;
+          hubBaseUrl = val;
+          localStorage.setItem('capture_hub_url', hubBaseUrl);
+          updateHubLabel();
+          pollData();
+          el.saveHubUrlBtn.textContent = 'Saved!';
+          setTimeout(() => el.saveHubUrlBtn.textContent = 'Save', 2000);
+        });
+
+        el.addEdgeForm.addEventListener('submit', handleAddEdge);
+      }
+
+      async function pollData() {
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/edges`);
+          if (!res.ok) throw new Error('Status ' + res.status);
+          const data = await res.json();
+          state.edges = data.edges || [];
+          state.displayEnabled = data.display_enabled;
+
+          updateHUD();
+          renderFeeds();
+          renderModalEdges();
+        } catch (err) {
+          el.feedsViewport.innerHTML = `
+            <div class="empty-state">
+              <p>Cannot reach Edge Hub at <code>${hubBaseUrl}</code></p>
+              <button class="submit-btn" onclick="document.getElementById('hubConfigBadge').click()">Configure Endpoint</button>
+            </div>
+          `;
+        }
+      }
+
+      function updateHUD() {
+        const onlineEdges = state.edges.filter(e => e.online);
+        let totalSensors = 0;
+        onlineEdges.forEach(e => totalSensors += (e.sensors || []).length);
+
+        el.edgeCountBadge.textContent = state.edges.length;
+        el.onlineEdgesCount.textContent = `${onlineEdges.length}/${state.edges.length}`;
+        el.totalSensorsCount.textContent = totalSensors;
+
+        const isAnyRecording = onlineEdges.some(e => e.collection && e.collection.is_recording);
+        state.isRecording = isAnyRecording;
+
+        if (isAnyRecording) {
+          el.recStatusBox.classList.add('recording');
+          el.recStateText.textContent = 'INTERNAL RECORDING';
+          el.toggleCollectBtn.classList.add('recording');
+          el.collectBtnText.textContent = 'STOP RECORDING';
+          el.collectSubText.textContent = 'Active on edge storage';
+
+          let maxDur = 0;
+          onlineEdges.forEach(e => {
+            if (e.collection && e.collection.is_recording) {
+              maxDur = Math.max(maxDur, e.collection.duration_seconds || 0);
+            }
+          });
+          el.recTimerText.textContent = formatDuration(maxDur);
+        } else {
+          el.recStatusBox.classList.remove('recording');
+          el.recStateText.textContent = 'IDLE - READY';
+          el.recTimerText.textContent = '00:00:00';
+          el.toggleCollectBtn.classList.remove('recording');
+          el.collectBtnText.textContent = 'COLLECT FEEDS';
+          el.collectSubText.textContent = 'Record to internal edge storage';
+        }
+
+        if (state.displayEnabled) {
+          el.toggleDisplayBtn.classList.add('active');
+          el.displayBtnText.textContent = 'DISPLAY FEEDS: ON';
+        } else {
+          el.toggleDisplayBtn.classList.remove('active');
+          el.displayBtnText.textContent = 'DISPLAY FEEDS: OFF';
+        }
+      }
+
+      async function toggleDisplay() {
+        const newState = !state.displayEnabled;
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/display/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: newState })
+          });
+          if (res.ok) {
+            const d = await res.json();
+            state.displayEnabled = d.display_enabled;
+            updateHUD();
+            renderFeeds();
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      async function toggleCollection() {
+        const endpoint = state.isRecording ? '/api/collection/stop' : '/api/collection/start';
+        try {
+          await fetch(`${hubBaseUrl}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ label: 'capture.me.uk Session' })
+          });
+          await pollData();
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      function switchViewMode(mode) {
+        state.viewMode = mode;
+        if (mode === 'device') {
+          el.viewByDeviceBtn.classList.add('active');
+          el.viewByModalityBtn.classList.remove('active');
+          el.modalityPillsBar.style.display = 'none';
+        } else {
+          el.viewByDeviceBtn.classList.remove('active');
+          el.viewByModalityBtn.classList.add('active');
+          el.modalityPillsBar.style.display = 'flex';
+        }
+        renderFeeds();
+      }
+
+      function renderFeeds() {
+        if (state.edges.length === 0) {
+          el.feedsViewport.innerHTML = `
+            <div class="empty-state">
+              <p>No edge devices configured.</p>
+              <button class="submit-btn" onclick="document.getElementById('openAddDeviceBtn').click()">+ Add Edge Device</button>
+            </div>
+          `;
+          return;
+        }
+
+        if (state.viewMode === 'device') {
+          renderByDevice();
+        } else {
+          renderByModality();
+        }
+      }
+
+      function renderByDevice() {
+        let html = '';
+        state.edges.forEach(edge => {
+          const isOnline = edge.online;
+          const sensors = edge.sensors || [];
+          const col = edge.collection || {};
+          const isRec = col.is_recording;
+          const freeGb = col.disk_free_gb !== undefined ? `${col.disk_free_gb} GB Free` : 'SD Card Ready';
+
+          html += `
+            <div class="device-card" id="card-${edge.device_id}">
+              <div class="device-card-header">
+                <div class="device-card-title">
+                  <div class="status-indicator ${isOnline ? '' : 'offline'}"></div>
+                  <span class="device-name">${escapeHtml(edge.device_name || edge.device_id)}</span>
+                  <span class="device-id-tag">${escapeHtml(edge.device_id)}</span>
+                </div>
+                <div class="device-telemetry">
+                  ${isRec ? `<span class="rec-pulse-chip">⏺ REC (${col.duration_seconds || 0}s)</span>` : ''}
+                  <span class="storage-badge">💾 ${freeGb}</span>
+                </div>
+              </div>
+              
+              <div class="sensors-grid">
+                ${sensors.length > 0 ? sensors.map(s => renderSensorBox(edge, s)).join('') : `
+                  <div class="empty-state" style="padding: 20px;">
+                    <p>${isOnline ? 'No sensors reported' : 'Edge device offline'}</p>
+                  </div>
+                `}
+              </div>
+            </div>
+          `;
+        });
+        el.feedsViewport.innerHTML = html;
+      }
+
+      function renderByModality() {
+        const modalitiesMap = {};
+        state.edges.forEach(edge => {
+          if (!edge.online) return;
+          (edge.sensors || []).forEach(sensor => {
+            const mod = (sensor.modality || 'other').toLowerCase();
+            if (state.selectedModalityFilter !== 'all' && mod !== state.selectedModalityFilter) return;
+            if (!modalitiesMap[mod]) modalitiesMap[mod] = [];
+            modalitiesMap[mod].push({ edge, sensor });
+          });
+        });
+
+        const modalities = Object.keys(modalitiesMap);
+        if (modalities.length === 0) {
+          el.feedsViewport.innerHTML = `
+            <div class="empty-state">
+              <p>No sensor feeds found for filter: <strong>${escapeHtml(state.selectedModalityFilter.toUpperCase())}</strong></p>
+            </div>
+          `;
+          return;
+        }
+
+        let html = '';
+        modalities.forEach(mod => {
+          const items = modalitiesMap[mod];
+          html += `
+            <div class="modality-group-section">
+              <div class="modality-section-header">
+                <span class="feed-modality-badge modality-${mod}">${mod}</span>
+                <h3 class="modality-section-title">All ${mod.toUpperCase()} Sensors (${items.length})</h3>
+              </div>
+              <div class="sensors-grid">
+                ${items.map(item => renderSensorBox(item.edge, item.sensor, true)).join('')}
+              </div>
+            </div>
+          `;
+        });
+        el.feedsViewport.innerHTML = html;
+      }
+
+      function renderSensorBox(edge, sensor, showDeviceTag = false) {
+        const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${sensor.id || sensor.modality}`;
+        const mod = (sensor.modality || 'rgb').toLowerCase();
+        const isRec = edge.collection && edge.collection.is_recording;
+        const frameCount = (edge.collection && edge.collection.frame_counts && edge.collection.frame_counts[sensor.id]) || 0;
+
+        return `
+          <div class="feed-box" id="sensor-${edge.device_id}-${sensor.id}">
+            <div class="feed-box-header">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span class="feed-modality-badge modality-${mod}">${mod}</span>
+                <span class="feed-name">${escapeHtml(sensor.name || sensor.id)}</span>
+              </div>
+              ${showDeviceTag ? `<span class="device-id-tag">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
+            </div>
+
+            <div class="feed-screen">
+              ${state.displayEnabled && edge.online ? `
+                <img src="${streamUrl}" alt="${sensor.name}" loading="lazy">
+              ` : `
+                <div class="display-off-overlay">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                  </svg>
+                  <span>${!edge.online ? 'Edge Offline' : 'Display Paused'}</span>
+                </div>
+              `}
+            </div>
+
+            <div class="feed-footer">
+              <span>${sensor.resolution || '640x480'} @ ${sensor.fps || 15}fps</span>
+              <span>${isRec ? `<span class="rec-pulse-chip">REC #${frameCount}</span>` : 'READY'}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      function renderModalEdges() {
+        if (!el.edgeListContainer) return;
+        el.edgeListContainer.innerHTML = state.edges.map(e => `
+          <div class="edge-item-row">
+            <div class="edge-item-info">
+              <span class="edge-item-name">${escapeHtml(e.device_name || e.device_id)}</span>
+              <span class="edge-item-url">${escapeHtml(e.host)}:${e.port} &bull; ${e.online ? '<span style="color:var(--accent-green)">ONLINE</span>' : '<span style="color:var(--text-dim)">OFFLINE</span>'}</span>
+            </div>
+            <button class="delete-edge-btn" onclick="window.removeEdgeDevice('${e.device_id}')">Remove</button>
+          </div>
+        `).join('');
+      }
+
+      async function handleAddEdge(e) {
+        e.preventDefault();
+        const payload = {
+          device_id: el.edgeIdInput.value.trim(),
+          device_name: el.edgeNameInput.value.trim(),
+          host: el.edgeHostInput.value.trim(),
+          port: parseInt(el.edgePortInput.value.trim(), 10) || 5001
+        };
+
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/edges`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            el.addEdgeForm.reset();
+            await pollData();
+          }
+        } catch (err) {
+          alert('Failed to add edge device: ' + err);
+        }
+      }
+
+      window.removeEdgeDevice = async function(deviceId) {
+        if (!confirm(`Remove edge device "${deviceId}"?`)) return;
+        try {
+          await fetch(`${hubBaseUrl}/api/edges/${deviceId}`, { method: 'DELETE' });
+          await pollData();
+        } catch (err) {
+          alert('Failed to remove edge: ' + err);
+        }
+      };
+
+      function formatDuration(sec) {
+        const s = Math.floor(sec);
+        const hrs = Math.floor(s / 3600).toString().padStart(2, '0');
+        const mins = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
+        const secs = (s % 60).toString().padStart(2, '0');
+        return `${hrs}:${mins}:${secs}`;
+      }
+
+      function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      document.addEventListener('DOMContentLoaded', init);
+    })();
+  </script>
+</body>
+</html>
