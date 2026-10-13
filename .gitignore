@@ -31,3 +31,4 @@ data_storage/
 .system_generated/
 *.jpg
 cloudflared.exe
+scratch/

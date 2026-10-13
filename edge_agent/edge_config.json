@@ -13,7 +13,7 @@
       "type": "v4l2",
       "device": "/dev/video0",
       "width": 640,
-      "height": 480,
+      "height": 600,
       "fps": 15
     }
   ]

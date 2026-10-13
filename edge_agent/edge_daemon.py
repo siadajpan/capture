@@ -55,7 +55,7 @@ DEFAULT_CONFIG = {
             "type": "v4l2",
             "device": "/dev/video0",
             "width": 640,
-            "height": 480,
+            "height": 600,
             "fps": 15
         }
     ]
@@ -91,29 +91,74 @@ class SensorDriver:
         self.use_fallback = False
         self._init_hardware()
 
+    def _read_exact(self, pipe, size):
+        chunks = []
+        total = 0
+        while total < size and not getattr(self, "_stop_stream", False):
+            try:
+                chunk = pipe.read(min(size - total, 65536))
+                if not chunk:
+                    return None
+                chunks.append(chunk)
+                total += len(chunk)
+            except Exception:
+                return None
+        return b"".join(chunks) if len(chunks) > 1 else (chunks[0] if chunks else None)
+
     def _init_hardware(self):
         # 1. Try direct V4L2 stream via v4l2-ctl (best for Unicam / VD55G0 global shutter monochrome)
         if os.path.exists(self.device_node):
             try:
-                frame_size = self.width * self.height
+                # Explicitly configure device format so driver and reader are 100% synchronized
+                try:
+                    subprocess.run(
+                        ["v4l2-ctl", "-d", self.device_node, f"--set-fmt-video=width={self.width},height={self.height},pixelformat=GREY"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
+                    )
+                except Exception as ex:
+                    logger.warning(f"Could not set v4l2 format: {ex}")
+
+                # Query the actual format accepted by the driver
+                actual_w = self.width
+                actual_h = self.height
+                actual_size = self.width * self.height
+                try:
+                    fmt_proc = subprocess.run(
+                        ["v4l2-ctl", "-d", self.device_node, "--get-fmt-video"],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2
+                    )
+                    for line in fmt_proc.stdout.splitlines():
+                        if "Width/Height" in line:
+                            parts = line.split(":")[-1].strip().split("/")
+                            actual_w = int(parts[0])
+                            actual_h = int(parts[1])
+                        elif "Size Image" in line:
+                            actual_size = int(line.split(":")[-1].strip())
+                except Exception:
+                    pass
+
+                self.width = actual_w
+                self.height = actual_h
+                self.frame_size = actual_size
+
                 self.v4l2_proc = subprocess.Popen(
                     ["v4l2-ctl", "-d", self.device_node, "--stream-mmap", "--stream-to=-"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
-                    bufsize=frame_size * 2
+                    bufsize=self.frame_size * 2
                 )
-                test_frame = self.v4l2_proc.stdout.read(frame_size)
-                if len(test_frame) == frame_size:
+                test_frame = self._read_exact(self.v4l2_proc.stdout, self.frame_size)
+                if test_frame and len(test_frame) == self.frame_size:
                     self.backend = "v4l2_pipe"
                     from PIL import Image
-                    img = Image.frombytes('L', (self.width, self.height), test_frame).convert('RGB')
+                    img = Image.frombytes('L', (self.width, self.height), test_frame)
                     buf = io.BytesIO()
                     img.save(buf, format='JPEG', quality=75)
                     self.latest_jpeg = buf.getvalue()
                     self._stop_stream = False
                     self.stream_thread = threading.Thread(target=self._v4l2_read_loop, daemon=True)
                     self.stream_thread.start()
-                    logger.info(f"[{self.sensor_id}] Initialized direct V4L2 streaming on {self.device_node} ({self.width}x{self.height})")
+                    logger.info(f"[{self.sensor_id}] Initialized direct V4L2 streaming on {self.device_node} ({self.width}x{self.height}, {self.frame_size} bytes)")
                     return
                 else:
                     self.v4l2_proc.terminate()
@@ -179,17 +224,43 @@ class SensorDriver:
 
     def _v4l2_read_loop(self):
         from PIL import Image
-        frame_size = self.width * self.height
+        import fcntl, termios, array
+
+        def get_pipe_bytes(fd):
+            b = array.array('i', [0])
+            try:
+                fcntl.ioctl(fd, termios.FIONREAD, b)
+                return b[0]
+            except Exception:
+                return 0
+
+        target_fps = max(self.fps, 15)
+        min_interval = 1.0 / (target_fps * 1.5)
+        last_encode_time = 0
+
         while not getattr(self, "_stop_stream", False) and self.v4l2_proc and self.v4l2_proc.poll() is None:
             try:
-                raw = self.v4l2_proc.stdout.read(frame_size)
-                if len(raw) < frame_size:
+                # Discard stale backlog if pipe has accumulated older frames
+                pipe_fd = self.v4l2_proc.stdout.fileno()
+                avail = get_pipe_bytes(pipe_fd)
+                if avail > self.frame_size * 2:
+                    discard_count = (avail // self.frame_size) - 1
+                    if discard_count > 0:
+                        self.v4l2_proc.stdout.read(discard_count * self.frame_size)
+
+                raw = self._read_exact(self.v4l2_proc.stdout, self.frame_size)
+                if not raw or len(raw) < self.frame_size:
                     time.sleep(0.01)
                     continue
-                img = Image.frombytes('L', (self.width, self.height), raw).convert('RGB')
-                buf = io.BytesIO()
-                img.save(buf, format='JPEG', quality=75)
-                self.latest_jpeg = buf.getvalue()
+
+                now = time.time()
+                # Rate-limit JPEG compression to target FPS
+                if now - last_encode_time >= min_interval:
+                    img = Image.frombytes('L', (self.width, self.height), raw)
+                    buf = io.BytesIO()
+                    img.save(buf, format='JPEG', quality=75)
+                    self.latest_jpeg = buf.getvalue()
+                    last_encode_time = now
             except Exception:
                 time.sleep(0.02)
 
