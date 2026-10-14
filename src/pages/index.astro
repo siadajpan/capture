@@ -23,135 +23,63 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 </head>
 <body>
   <div class="app-container">
-    <!-- Top Bar -->
-    <header class="top-nav">
-      <div class="brand">
+    <!-- Slim Modern Top Bar -->
+    <header class="top-nav-slim">
+      <div class="nav-left">
         <div class="brand-badge">
           <div class="pulse-dot"></div>
           <span class="brand-title">CAPTURE</span>
-          <span class="domain-tag">capture.me.uk</span>
+        </div>
+
+        <div class="nav-segmented">
+          <button id="viewByModalityBtn" class="nav-seg-btn active" type="button" title="Group by Sensors">Sensors</button>
+          <button id="viewByDeviceBtn" class="nav-seg-btn" type="button" title="Group by Device">Devices</button>
+        </div>
+
+        <div class="filter-pills" id="modalityPillsBar">
+          <button class="pill active" data-mod="all" type="button">All</button>
+          <button class="pill" data-mod="rgb" type="button">RGB</button>
+          <button class="pill" data-mod="thermal" type="button">Thermal</button>
+          <button class="pill" data-mod="depth" type="button">Depth</button>
         </div>
       </div>
 
-      <div class="top-actions">
-        <div class="network-badge" id="hubConfigBadge" title="Configure Hub / Edge Endpoint URL">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
-            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
-            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
-            <circle cx="12" cy="20" r="1"></circle>
+      <div class="nav-right">
+        <!-- Live Video Toggle Pill -->
+        <button id="quickDisplayBtn" class="nav-pill-btn active" type="button" title="Toggle Live Feeds">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
           </svg>
-          <span id="hubHostLabel">Connecting...</span>
-        </div>
+          <span id="quickDisplayLabel">LIVE</span>
+        </button>
 
-        <button class="icon-btn" id="openFleetBtn" title="Device Fleet & Availability Menu">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
-            <line x1="8" y1="21" x2="16" y2="21"></line>
-            <line x1="12" y1="17" x2="12" y2="21"></line>
+        <!-- Recording Pill -->
+        <button id="quickRecordBtn" class="nav-pill-btn record-pill" type="button" title="Toggle Synchronized Edge Recording">
+          <div class="record-dot"></div>
+          <span id="quickRecordLabel">REC</span>
+        </button>
+
+        <!-- System & Tunnel Menu Button -->
+        <button id="openMenuBtn" class="menu-btn" type="button" title="Open Settings & System Menu">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
           </svg>
-          <span class="btn-text">Fleet (<span id="edgeCountBadge">0</span>)</span>
+          <span class="menu-btn-label">Menu</span>
+          <span class="menu-badge" id="menuEdgeBadge">0</span>
         </button>
       </div>
     </header>
 
-    <!-- Master Control HUD -->
-    <section class="master-hud">
-      <div class="hud-status-row">
-        <div class="recording-indicator-box" id="recStatusBox">
-          <div class="rec-led" id="recLed"></div>
-          <div class="rec-info">
-            <div class="rec-title" id="recStateText">IDLE - READY</div>
-            <div class="rec-timer" id="recTimerText">00:00:00</div>
-          </div>
-        </div>
-
-        <div class="hud-stat-chips">
-          <div class="chip">
-            <span class="chip-label">Active Sensors</span>
-            <span class="chip-val" id="totalSensorsCount">0</span>
-          </div>
-          <div class="chip">
-            <span class="chip-label">Edges Online</span>
-            <span class="chip-val text-accent" id="onlineEdgesCount">0</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Action Buttons Required by User -->
-      <div class="hud-buttons-grid">
-        <!-- Button 1: Display Feeds / Live View Toggle -->
-        <button id="toggleDisplayBtn" class="action-btn display-btn active">
-          <div class="btn-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-              <circle cx="12" cy="12" r="3"></circle>
-            </svg>
-          </div>
-          <div class="btn-labels">
-            <span class="primary-text" id="displayBtnText">DISPLAY FEEDS: ON</span>
-            <span class="sub-text">Live streams visible</span>
-          </div>
-        </button>
-
-        <!-- Button 2: Collect Feeds (Internal Edge Storage) -->
-        <button id="toggleCollectBtn" class="action-btn record-btn">
-          <div class="btn-icon">
-            <div class="record-symbol"></div>
-          </div>
-          <div class="btn-labels">
-            <span class="primary-text" id="collectBtnText">COLLECT FEEDS</span>
-            <span class="sub-text" id="collectSubText">Record to internal edge storage</span>
-          </div>
-        </button>
-      </div>
-    </section>
-
-    <!-- View Mode Switcher -->
-    <div class="view-switcher-bar">
-      <div class="segmented-control">
-        <button id="viewByDeviceBtn" class="seg-btn active">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
-            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
-            <line x1="6" y1="6" x2="6.01" y2="6"></line>
-            <line x1="6" y1="18" x2="6.01" y2="18"></line>
-          </svg>
-          <span>By Device</span>
-        </button>
-        <button id="viewByModalityBtn" class="seg-btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-            <polyline points="2 17 12 22 22 17"></polyline>
-            <polyline points="2 12 12 17 22 12"></polyline>
-          </svg>
-          <span>Grouped by Modality</span>
-        </button>
-      </div>
-
-      <div class="filter-pills" id="modalityPillsBar" style="display: none;">
-        <button class="pill active" data-mod="all">All</button>
-        <button class="pill" data-mod="rgb">RGB</button>
-        <button class="pill" data-mod="thermal">Thermal</button>
-        <button class="pill" data-mod="depth">Depth</button>
-      </div>
-    </div>
-
-    <!-- Main Dynamic Feed Container -->
+    <!-- Main Dynamic Feed Container (Centered 3/2 Columns) -->
     <main class="feeds-viewport" id="feedsViewport">
       <div class="loading-state">
         <div class="spinner"></div>
         <p>Connecting to Edge Devices via capture.me.uk...</p>
       </div>
     </main>
-
-    <!-- Storage Pattern Footer -->
-    <footer class="app-footer">
-      <div class="storage-info-bar">
-        <span class="badge-tag">EDGE STORAGE PATTERN</span>
-        <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code>
-      </div>
-    </footer>
   </div>
 
   <!-- Fleet Management & Hub Settings Modal -->
@@ -159,10 +87,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
     <div class="modal-card wide-modal">
       <div class="modal-header">
         <div class="modal-header-tabs">
-          <button type="button" class="modal-tab-btn active" id="tabFleetBtn" data-tab="fleet">
+          <button type="button" class="modal-tab-btn active" id="tabOverviewBtn" data-tab="overview">
             <span>🌐</span>
-            <span>Fleet & Availability</span>
-            <span class="tab-badge" id="modalFleetBadge">0/0</span>
+            <span>Overview & Tunnel</span>
+          </button>
+          <button type="button" class="modal-tab-btn" id="tabFleetBtn" data-tab="fleet">
+            <span>💻</span>
+            <span>Fleet (<span id="modalFleetBadge">0/0</span>)</span>
           </button>
           <button type="button" class="modal-tab-btn" id="tabAddBtn" data-tab="add">
             <span>➕</span>
@@ -170,15 +101,92 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           </button>
           <button type="button" class="modal-tab-btn" id="tabConfigBtn" data-tab="config">
             <span>⚙️</span>
-            <span>Hub & Tunnel</span>
+            <span>Hub Settings</span>
           </button>
         </div>
         <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button>
       </div>
 
       <div class="modal-body">
-        <!-- TAB 1: FLEET AVAILABILITY -->
-        <div class="modal-tab-pane active" id="tabPaneFleet">
+        <!-- TAB 1: OVERVIEW & TUNNEL -->
+        <div class="modal-tab-pane active" id="tabPaneOverview">
+          <!-- Cloudflare Tunnel Info Box -->
+          <div class="tunnel-highlight-card">
+            <div class="tunnel-card-header">
+              <div class="tunnel-status-pill">
+                <span class="pulse-dot-green"></span>
+                <span>CLOUDFLARE TUNNEL</span>
+              </div>
+              <span class="tunnel-badge-active">ONLINE</span>
+            </div>
+            
+            <div class="tunnel-url-row">
+              <div class="tunnel-url-display" id="modalTunnelUrl">https://marvel-reconstruction-atm-planning.trycloudflare.com</div>
+              <button type="button" class="copy-btn-tunnel" id="copyTunnelBtn" title="Copy Tunnel URL">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span id="copyBtnText">Copy</span>
+              </button>
+              <a href="https://marvel-reconstruction-atm-planning.trycloudflare.com" target="_blank" rel="noopener" class="open-link-btn" id="openTunnelLink" title="Open in new window">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                  <polyline points="15 3 21 3 21 9"></polyline>
+                  <line x1="10" y1="14" x2="21" y2="3"></line>
+                </svg>
+              </a>
+            </div>
+
+            <div class="tunnel-meta-row">
+              <span><strong>Local LAN Hub:</strong> <code id="localIpLabel">http://192.168.137.1:8000</code></span>
+              <span><strong>Custom Domain:</strong> <code>capture.me.uk</code></span>
+            </div>
+          </div>
+
+          <!-- System Stats Grid -->
+          <div class="menu-stats-grid">
+            <div class="menu-stat-card">
+              <span class="stat-num text-accent" id="menuSensorsCount">0</span>
+              <span class="stat-sub">Active Sensors</span>
+            </div>
+            <div class="menu-stat-card">
+              <span class="stat-num text-green" id="menuOnlineEdges">0/0</span>
+              <span class="stat-sub">Edges Online</span>
+            </div>
+            <div class="menu-stat-card">
+              <span class="stat-num" id="menuFreeStorage">--</span>
+              <span class="stat-sub">SD Card Free</span>
+            </div>
+            <div class="menu-stat-card">
+              <span class="stat-num" id="menuRecDuration">00:00:00</span>
+              <span class="stat-sub" id="menuRecStatusLabel">Standby</span>
+            </div>
+          </div>
+
+          <!-- Synchronized Recording Controls -->
+          <div class="menu-rec-section">
+            <div class="rec-section-header">
+              <h4>🔴 Edge Synchronized Recording</h4>
+              <span class="badge-tag" id="menuRecBadge">IDLE</span>
+            </div>
+            <p class="rec-section-desc">Starts synchronized local MJPEG / raw frame recording simultaneously across all connected edge nodes to internal SD card storage.</p>
+            <div class="rec-controls-bar">
+              <input type="text" id="recSessionLabelInput" placeholder="Session label" value="capture.me.uk Session" class="rec-label-input">
+              <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn">
+                <div class="record-symbol"></div>
+                <span id="modalCollectBtnText">Start Recording</span>
+              </button>
+            </div>
+            <div class="storage-path-box">
+              <span class="path-title">Internal Edge File Pattern:</span>
+              <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: FLEET AVAILABILITY -->
+        <div class="modal-tab-pane" id="tabPaneFleet">
           <div class="fleet-header-summary">
             <div class="fleet-stats">
               <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span>
@@ -285,7 +293,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       }
 
       const state = {
-        viewMode: 'device',
+        viewMode: 'modality',
         selectedModalityFilter: 'all',
         displayEnabled: true,
         isRecording: false,
@@ -294,23 +302,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       };
 
       const el = {
-        hubHostLabel: document.getElementById('hubHostLabel'),
-        hubConfigBadge: document.getElementById('hubConfigBadge'),
-        hubUrlInput: document.getElementById('hubUrlInput'),
-        saveHubUrlBtn: document.getElementById('saveHubUrlBtn'),
-        btnPresetDefault: document.getElementById('btnPresetDefault'),
-        edgeCountBadge: document.getElementById('edgeCountBadge'),
-        onlineEdgesCount: document.getElementById('onlineEdgesCount'),
-        totalSensorsCount: document.getElementById('totalSensorsCount'),
-
-        recStatusBox: document.getElementById('recStatusBox'),
-        recStateText: document.getElementById('recStateText'),
-        recTimerText: document.getElementById('recTimerText'),
-        toggleDisplayBtn: document.getElementById('toggleDisplayBtn'),
-        displayBtnText: document.getElementById('displayBtnText'),
-        toggleCollectBtn: document.getElementById('toggleCollectBtn'),
-        collectBtnText: document.getElementById('collectBtnText'),
-        collectSubText: document.getElementById('collectSubText'),
+        openMenuBtn: document.getElementById('openMenuBtn'),
+        quickDisplayBtn: document.getElementById('quickDisplayBtn'),
+        quickDisplayLabel: document.getElementById('quickDisplayLabel'),
+        quickRecordBtn: document.getElementById('quickRecordBtn'),
+        quickRecordLabel: document.getElementById('quickRecordLabel'),
+        menuEdgeBadge: document.getElementById('menuEdgeBadge'),
 
         viewByDeviceBtn: document.getElementById('viewByDeviceBtn'),
         viewByModalityBtn: document.getElementById('viewByModalityBtn'),
@@ -318,8 +315,33 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         feedsViewport: document.getElementById('feedsViewport'),
 
         modalBackdrop: document.getElementById('modalBackdrop'),
-        openFleetBtn: document.getElementById('openFleetBtn'),
         closeModalBtn: document.getElementById('closeModalBtn'),
+        tabOverviewBtn: document.getElementById('tabOverviewBtn'),
+        tabFleetBtn: document.getElementById('tabFleetBtn'),
+        tabAddBtn: document.getElementById('tabAddBtn'),
+        tabConfigBtn: document.getElementById('tabConfigBtn'),
+
+        modalTunnelUrl: document.getElementById('modalTunnelUrl'),
+        copyTunnelBtn: document.getElementById('copyTunnelBtn'),
+        copyBtnText: document.getElementById('copyBtnText'),
+        openTunnelLink: document.getElementById('openTunnelLink'),
+        localIpLabel: document.getElementById('localIpLabel'),
+
+        menuSensorsCount: document.getElementById('menuSensorsCount'),
+        menuOnlineEdges: document.getElementById('menuOnlineEdges'),
+        menuFreeStorage: document.getElementById('menuFreeStorage'),
+        menuRecDuration: document.getElementById('menuRecDuration'),
+        menuRecStatusLabel: document.getElementById('menuRecStatusLabel'),
+        menuRecBadge: document.getElementById('menuRecBadge'),
+
+        recSessionLabelInput: document.getElementById('recSessionLabelInput'),
+        modalCollectBtn: document.getElementById('modalCollectBtn'),
+        modalCollectBtnText: document.getElementById('modalCollectBtnText'),
+
+        hubUrlInput: document.getElementById('hubUrlInput'),
+        saveHubUrlBtn: document.getElementById('saveHubUrlBtn'),
+        btnPresetDefault: document.getElementById('btnPresetDefault'),
+
         addEdgeForm: document.getElementById('addEdgeForm'),
         edgeNameInput: document.getElementById('edgeNameInput'),
         edgeIdInput: document.getElementById('edgeIdInput'),
@@ -329,27 +351,32 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         modalFleetBadge: document.getElementById('modalFleetBadge'),
         summaryTotalEdges: document.getElementById('summaryTotalEdges'),
         summaryOnlineEdges: document.getElementById('summaryOnlineEdges'),
-        refreshFleetBtn: document.getElementById('refreshFleetBtn'),
-        tabFleetBtn: document.getElementById('tabFleetBtn'),
-        tabAddBtn: document.getElementById('tabAddBtn'),
-        tabConfigBtn: document.getElementById('tabConfigBtn')
+        refreshFleetBtn: document.getElementById('refreshFleetBtn')
       };
 
       async function init() {
         await loadClientConfig();
         if (el.hubUrlInput) el.hubUrlInput.value = hubBaseUrl;
-        updateHubLabel();
         bindEvents();
+        await fetchSystemInfo();
         await pollData();
         state.pollTimer = setInterval(pollData, 1800);
       }
 
-      function updateHubLabel() {
+      async function fetchSystemInfo() {
         try {
-          const u = new URL(hubBaseUrl);
-          el.hubHostLabel.textContent = u.host;
-        } catch {
-          el.hubHostLabel.textContent = hubBaseUrl;
+          const res = await fetch(`${hubBaseUrl}/api/info`);
+          if (res.ok) {
+            const info = await res.json();
+            const tunnel = info.tunnel_url || clientConfig?.default_hub_url || hubBaseUrl;
+            if (el.modalTunnelUrl) el.modalTunnelUrl.textContent = tunnel;
+            if (el.openTunnelLink) el.openTunnelLink.href = tunnel;
+            if (el.localIpLabel && info.mobile_url) el.localIpLabel.textContent = info.mobile_url;
+          }
+        } catch (e) {
+          const fallbackTunnel = clientConfig?.default_hub_url || 'https://marvel-reconstruction-atm-planning.trycloudflare.com';
+          if (el.modalTunnelUrl) el.modalTunnelUrl.textContent = fallbackTunnel;
+          if (el.openTunnelLink) el.openTunnelLink.href = fallbackTunnel;
         }
       }
 
@@ -365,42 +392,70 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       };
 
       function bindEvents() {
-        el.toggleDisplayBtn.addEventListener('click', toggleDisplay);
-        el.toggleCollectBtn.addEventListener('click', toggleCollection);
+        if (el.quickDisplayBtn) el.quickDisplayBtn.addEventListener('click', toggleDisplay);
+        if (el.quickRecordBtn) el.quickRecordBtn.addEventListener('click', toggleCollection);
+        if (el.modalCollectBtn) el.modalCollectBtn.addEventListener('click', toggleCollection);
 
-        el.viewByDeviceBtn.addEventListener('click', () => switchViewMode('device'));
-        el.viewByModalityBtn.addEventListener('click', () => switchViewMode('modality'));
+        if (el.viewByDeviceBtn) el.viewByDeviceBtn.addEventListener('click', () => switchViewMode('device'));
+        if (el.viewByModalityBtn) el.viewByModalityBtn.addEventListener('click', () => switchViewMode('modality'));
 
-        el.modalityPillsBar.addEventListener('click', (e) => {
-          const btn = e.target.closest('.pill');
-          if (!btn) return;
-          document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
-          btn.classList.add('active');
-          state.selectedModalityFilter = btn.dataset.mod;
-          renderFeeds();
-        });
+        if (el.modalityPillsBar) {
+          el.modalityPillsBar.addEventListener('click', (e) => {
+            const btn = e.target.closest('.pill');
+            if (!btn) return;
+            document.querySelectorAll('#modalityPillsBar .pill').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            state.selectedModalityFilter = btn.dataset.mod;
+            renderFeeds();
+          });
+        }
 
-        if (el.openFleetBtn) {
-          el.openFleetBtn.addEventListener('click', () => {
-            window.switchModalTab('fleet');
+        if (el.openMenuBtn) {
+          el.openMenuBtn.addEventListener('click', () => {
+            window.switchModalTab('overview');
             el.modalBackdrop.classList.add('open');
           });
         }
 
-        if (el.hubConfigBadge) {
-          el.hubConfigBadge.addEventListener('click', () => {
-            window.switchModalTab('config');
-            el.modalBackdrop.classList.add('open');
+        if (el.copyTunnelBtn) {
+          el.copyTunnelBtn.addEventListener('click', () => {
+            const url = el.modalTunnelUrl ? el.modalTunnelUrl.textContent.trim() : hubBaseUrl;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(url).then(() => {
+                if (el.copyBtnText) el.copyBtnText.textContent = 'Copied!';
+                setTimeout(() => { if (el.copyBtnText) el.copyBtnText.textContent = 'Copy'; }, 2000);
+              }).catch(() => fallbackCopy(url));
+            } else {
+              fallbackCopy(url);
+            }
           });
         }
 
-        el.closeModalBtn.addEventListener('click', () => el.modalBackdrop.classList.remove('open'));
-        el.modalBackdrop.addEventListener('click', (e) => {
-          if (e.target === el.modalBackdrop) el.modalBackdrop.classList.remove('open');
-        });
+        function fallbackCopy(text) {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand('copy');
+            if (el.copyBtnText) el.copyBtnText.textContent = 'Copied!';
+            setTimeout(() => { if (el.copyBtnText) el.copyBtnText.textContent = 'Copy'; }, 2000);
+          } catch (e) {}
+          document.body.removeChild(ta);
+        }
+
+        if (el.closeModalBtn) {
+          el.closeModalBtn.addEventListener('click', () => el.modalBackdrop.classList.remove('open'));
+        }
+
+        if (el.modalBackdrop) {
+          el.modalBackdrop.addEventListener('click', (e) => {
+            if (e.target === el.modalBackdrop) el.modalBackdrop.classList.remove('open');
+          });
+        }
 
         // Modal Tab Buttons
-        [el.tabFleetBtn, el.tabAddBtn, el.tabConfigBtn].forEach(tabBtn => {
+        [el.tabOverviewBtn, el.tabFleetBtn, el.tabAddBtn, el.tabConfigBtn].forEach(tabBtn => {
           if (tabBtn) {
             tabBtn.addEventListener('click', () => window.switchModalTab(tabBtn.dataset.tab));
           }
@@ -429,30 +484,32 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           });
         }
 
-        el.saveHubUrlBtn.addEventListener('click', () => {
-          let val = el.hubUrlInput.value.trim();
-          if (val && !val.startsWith('http')) val = 'http://' + val;
-          hubBaseUrl = val;
-          localStorage.setItem('capture_hub_url', hubBaseUrl);
-          updateHubLabel();
-          pollData();
-          el.saveHubUrlBtn.textContent = 'Saved!';
-          setTimeout(() => el.saveHubUrlBtn.textContent = 'Save', 2000);
-        });
+        if (el.saveHubUrlBtn) {
+          el.saveHubUrlBtn.addEventListener('click', () => {
+            let val = el.hubUrlInput.value.trim();
+            if (val && !val.startsWith('http')) val = 'http://' + val;
+            hubBaseUrl = val;
+            localStorage.setItem('capture_hub_url', hubBaseUrl);
+            pollData();
+            fetchSystemInfo();
+            el.saveHubUrlBtn.textContent = 'Saved!';
+            setTimeout(() => el.saveHubUrlBtn.textContent = 'Save', 2000);
+          });
+        }
 
         window.setQuickHub = function (url) {
           hubBaseUrl = url;
           localStorage.setItem('capture_hub_url', hubBaseUrl);
           if (el.hubUrlInput) el.hubUrlInput.value = hubBaseUrl;
-          updateHubLabel();
           pollData();
+          fetchSystemInfo();
           if (el.saveHubUrlBtn) {
             el.saveHubUrlBtn.textContent = 'Active!';
             setTimeout(() => el.saveHubUrlBtn.textContent = 'Save', 2000);
           }
         };
 
-        el.addEdgeForm.addEventListener('submit', handleAddEdge);
+        if (el.addEdgeForm) el.addEdgeForm.addEventListener('submit', handleAddEdge);
       }
 
       async function pollData() {
@@ -473,7 +530,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               <p>Cannot reach Edge Hub at <code>${escapeHtml(hubBaseUrl)}</code></p>
               <div style="display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap;">
                 <button class="submit-btn" onclick="window.setQuickHub('${defaultUrl}')">Connect Default Server Tunnel</button>
-                <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('hubConfigBadge').click()">Configure Endpoint</button>
+                <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('openMenuBtn').click()">Open Menu / Settings</button>
               </div>
             </div>
           `;
@@ -484,44 +541,58 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       function updateHUD() {
         const onlineEdges = state.edges.filter(e => e.online);
         let totalSensors = 0;
-        onlineEdges.forEach(e => totalSensors += (e.sensors || []).length);
+        let totalFreeGb = 0;
+        onlineEdges.forEach(e => {
+          totalSensors += (e.sensors || []).length;
+          if (e.collection && e.collection.disk_free_gb !== undefined) {
+            totalFreeGb += parseFloat(e.collection.disk_free_gb) || 0;
+          }
+        });
 
-        el.edgeCountBadge.textContent = state.edges.length;
-        el.onlineEdgesCount.textContent = `${onlineEdges.length}/${state.edges.length}`;
-        el.totalSensorsCount.textContent = totalSensors;
+        if (el.menuEdgeBadge) el.menuEdgeBadge.textContent = onlineEdges.length;
+        if (el.menuSensorsCount) el.menuSensorsCount.textContent = totalSensors;
+        if (el.menuOnlineEdges) el.menuOnlineEdges.textContent = `${onlineEdges.length}/${state.edges.length}`;
+        if (el.menuFreeStorage) el.menuFreeStorage.textContent = totalFreeGb > 0 ? `${totalFreeGb.toFixed(1)} GB` : '--';
 
         const isAnyRecording = onlineEdges.some(e => e.collection && e.collection.is_recording);
         state.isRecording = isAnyRecording;
 
+        let maxDur = 0;
         if (isAnyRecording) {
-          el.recStatusBox.classList.add('recording');
-          el.recStateText.textContent = 'INTERNAL RECORDING';
-          el.toggleCollectBtn.classList.add('recording');
-          el.collectBtnText.textContent = 'STOP RECORDING';
-          el.collectSubText.textContent = 'Active on edge storage';
-
-          let maxDur = 0;
           onlineEdges.forEach(e => {
             if (e.collection && e.collection.is_recording) {
               maxDur = Math.max(maxDur, e.collection.duration_seconds || 0);
             }
           });
-          el.recTimerText.textContent = formatDuration(maxDur);
+          const durStr = formatDuration(maxDur);
+          if (el.quickRecordBtn) el.quickRecordBtn.classList.add('recording');
+          if (el.quickRecordLabel) el.quickRecordLabel.textContent = durStr;
+          if (el.menuRecDuration) el.menuRecDuration.textContent = durStr;
+          if (el.menuRecStatusLabel) el.menuRecStatusLabel.textContent = 'Recording';
+          if (el.menuRecBadge) {
+            el.menuRecBadge.textContent = 'RECORDING';
+            el.menuRecBadge.style.color = 'var(--accent-red)';
+          }
+          if (el.modalCollectBtn) el.modalCollectBtn.classList.add('recording');
+          if (el.modalCollectBtnText) el.modalCollectBtnText.textContent = 'Stop Recording';
         } else {
-          el.recStatusBox.classList.remove('recording');
-          el.recStateText.textContent = 'IDLE - READY';
-          el.recTimerText.textContent = '00:00:00';
-          el.toggleCollectBtn.classList.remove('recording');
-          el.collectBtnText.textContent = 'COLLECT FEEDS';
-          el.collectSubText.textContent = 'Record to internal edge storage';
+          if (el.quickRecordBtn) el.quickRecordBtn.classList.remove('recording');
+          if (el.quickRecordLabel) el.quickRecordLabel.textContent = 'REC';
+          if (el.menuRecDuration) el.menuRecDuration.textContent = '00:00:00';
+          if (el.menuRecStatusLabel) el.menuRecStatusLabel.textContent = 'Standby';
+          if (el.menuRecBadge) {
+            el.menuRecBadge.textContent = 'IDLE';
+            el.menuRecBadge.style.color = '';
+          }
+          if (el.modalCollectBtn) el.modalCollectBtn.classList.remove('recording');
+          if (el.modalCollectBtnText) el.modalCollectBtnText.textContent = 'Start Recording';
         }
 
-        if (state.displayEnabled) {
-          el.toggleDisplayBtn.classList.add('active');
-          el.displayBtnText.textContent = 'DISPLAY FEEDS: ON';
-        } else {
-          el.toggleDisplayBtn.classList.remove('active');
-          el.displayBtnText.textContent = 'DISPLAY FEEDS: OFF';
+        if (el.quickDisplayBtn) {
+          el.quickDisplayBtn.classList.toggle('active', state.displayEnabled);
+        }
+        if (el.quickDisplayLabel) {
+          el.quickDisplayLabel.textContent = state.displayEnabled ? 'LIVE' : 'OFF';
         }
       }
 
@@ -546,11 +617,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
       async function toggleCollection() {
         const endpoint = state.isRecording ? '/api/collection/stop' : '/api/collection/start';
+        const label = el.recSessionLabelInput ? el.recSessionLabelInput.value.trim() : 'capture.me.uk Session';
         try {
           await fetch(`${hubBaseUrl}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label: 'capture.me.uk Session' })
+            body: JSON.stringify({ label: label || 'capture.me.uk Session' })
           });
           await pollData();
         } catch (e) {
@@ -561,13 +633,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       function switchViewMode(mode) {
         state.viewMode = mode;
         if (mode === 'device') {
-          el.viewByDeviceBtn.classList.add('active');
-          el.viewByModalityBtn.classList.remove('active');
-          el.modalityPillsBar.style.display = 'none';
+          if (el.viewByDeviceBtn) el.viewByDeviceBtn.classList.add('active');
+          if (el.viewByModalityBtn) el.viewByModalityBtn.classList.remove('active');
+          if (el.modalityPillsBar) el.modalityPillsBar.style.display = 'none';
         } else {
-          el.viewByDeviceBtn.classList.remove('active');
-          el.viewByModalityBtn.classList.add('active');
-          el.modalityPillsBar.style.display = 'flex';
+          if (el.viewByDeviceBtn) el.viewByDeviceBtn.classList.remove('active');
+          if (el.viewByModalityBtn) el.viewByModalityBtn.classList.add('active');
+          if (el.modalityPillsBar) el.modalityPillsBar.style.display = 'flex';
         }
         renderFeeds();
       }
@@ -577,7 +649,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           el.feedsViewport.innerHTML = `
             <div class="empty-state">
               <p>No edge devices configured.</p>
-              <button class="submit-btn" onclick="document.getElementById('openAddDeviceBtn').click()">+ Add Edge Device</button>
+              <button class="submit-btn" onclick="window.switchModalTab('add'); el.modalBackdrop.classList.add('open');">+ Add Edge Device</button>
             </div>
           `;
           return;
@@ -591,38 +663,40 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       }
 
       function renderByDevice() {
-        let html = '';
+        let html = '<div class="devices-grid">';
         state.edges.forEach(edge => {
           const isOnline = edge.online;
           const sensors = edge.sensors || [];
           const col = edge.collection || {};
           const isRec = col.is_recording;
-          const freeGb = col.disk_free_gb !== undefined ? `${col.disk_free_gb} GB Free` : 'SD Card Ready';
+          const freeGb = col.disk_free_gb !== undefined ? `${col.disk_free_gb} GB` : 'Ready';
+          const isSingle = sensors.length <= 1;
 
           html += `
-            <div class="device-card" id="card-${edge.device_id}">
+            <div class="device-card ${isSingle ? 'single-sensor' : 'multi-sensor'}" id="card-${edge.device_id}">
               <div class="device-card-header">
                 <div class="device-card-title">
                   <div class="status-indicator ${isOnline ? '' : 'offline'}"></div>
-                  <span class="device-name">${escapeHtml(edge.device_name || edge.device_id)}</span>
+                  <span class="device-name" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>
                   <span class="device-id-tag">${escapeHtml(edge.device_id)}</span>
                 </div>
                 <div class="device-telemetry">
-                  ${isRec ? `<span class="rec-pulse-chip">⏺ REC (${col.duration_seconds || 0}s)</span>` : ''}
-                  <span class="storage-badge">💾 ${freeGb}</span>
+                  ${isRec ? `<span class="rec-pulse-chip">⏺ ${col.duration_seconds || 0}s</span>` : ''}
+                  <span class="storage-badge" title="SD Free: ${freeGb}">💾 ${freeGb}</span>
                 </div>
               </div>
               
-              <div class="sensors-grid">
-                ${sensors.length > 0 ? sensors.map(s => renderSensorBox(edge, s)).join('') : `
-                  <div class="empty-state" style="padding: 20px;">
-                    <p>${isOnline ? 'No sensors reported' : 'Edge device offline'}</p>
+              <div class="${isSingle ? 'device-single-body' : 'sensors-grid'}">
+                ${sensors.length > 0 ? sensors.map(s => renderSensorBox(edge, s, false)).join('') : `
+                  <div class="empty-state" style="padding: 16px;">
+                    <p style="font-size: 0.75rem;">${isOnline ? 'No sensors reported' : 'Edge device offline'}</p>
                   </div>
                 `}
               </div>
             </div>
           `;
         });
+        html += '</div>';
         el.feedsViewport.innerHTML = html;
       }
 
@@ -655,7 +729,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             <div class="modality-group-section">
               <div class="modality-section-header">
                 <span class="feed-modality-badge modality-${mod}">${mod}</span>
-                <h3 class="modality-section-title">All ${mod.toUpperCase()} Sensors (${items.length})</h3>
+                <span class="modality-section-title">${mod.toUpperCase()} Feeds (${items.length})</span>
               </div>
               <div class="sensors-grid">
                 ${items.map(item => renderSensorBox(item.edge, item.sensor, true)).join('')}
@@ -675,11 +749,11 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         return `
           <div class="feed-box" id="sensor-${edge.device_id}-${sensor.id}">
             <div class="feed-box-header">
-              <div style="display:flex; align-items:center; gap:8px;">
+              <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
                 <span class="feed-modality-badge modality-${mod}">${mod}</span>
-                <span class="feed-name">${escapeHtml(sensor.name || sensor.id)}</span>
+                <span class="feed-name" title="${escapeHtml(sensor.name || sensor.id)}">${escapeHtml(sensor.name || sensor.id)}</span>
               </div>
-              ${showDeviceTag ? `<span class="device-id-tag">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
+              ${showDeviceTag ? `<span class="device-id-tag" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
             </div>
 
             <div class="feed-screen">
@@ -687,18 +761,18 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 <img src="${streamUrl}" alt="${sensor.name}" loading="lazy">
               ` : `
                 <div class="display-off-overlay">
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
                     <line x1="1" y1="1" x2="23" y2="23"></line>
                   </svg>
-                  <span>${!edge.online ? 'Edge Offline' : 'Display Paused'}</span>
+                  <span>${!edge.online ? 'Edge Offline' : 'Display Off'}</span>
                 </div>
               `}
             </div>
 
             <div class="feed-footer">
               <span>${sensor.resolution || '640x480'} @ ${sensor.fps || 15}fps</span>
-              <span>${isRec ? `<span class="rec-pulse-chip">REC #${frameCount}</span>` : 'READY'}</span>
+              <span>${isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY'}</span>
             </div>
           </div>
         `;

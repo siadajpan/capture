@@ -122,6 +122,7 @@ class SensorDriver:
                 actual_w = self.width
                 actual_h = self.height
                 actual_size = self.width * self.height
+                actual_stride = self.width
                 try:
                     fmt_proc = subprocess.run(
                         ["v4l2-ctl", "-d", self.device_node, "--get-fmt-video"],
@@ -132,6 +133,8 @@ class SensorDriver:
                             parts = line.split(":")[-1].strip().split("/")
                             actual_w = int(parts[0])
                             actual_h = int(parts[1])
+                        elif "Bytes per Line" in line:
+                            actual_stride = int(line.split(":")[-1].strip())
                         elif "Size Image" in line:
                             actual_size = int(line.split(":")[-1].strip())
                 except Exception:
@@ -139,6 +142,7 @@ class SensorDriver:
 
                 self.width = actual_w
                 self.height = actual_h
+                self.stride = actual_stride
                 self.frame_size = actual_size
 
                 self.v4l2_proc = subprocess.Popen(
@@ -150,15 +154,14 @@ class SensorDriver:
                 test_frame = self._read_exact(self.v4l2_proc.stdout, self.frame_size)
                 if test_frame and len(test_frame) == self.frame_size:
                     self.backend = "v4l2_pipe"
-                    from PIL import Image
-                    img = Image.frombytes('L', (self.width, self.height), test_frame)
+                    img = self._decode_v4l2_frame(test_frame)
                     buf = io.BytesIO()
                     img.save(buf, format='JPEG', quality=75)
                     self.latest_jpeg = buf.getvalue()
                     self._stop_stream = False
                     self.stream_thread = threading.Thread(target=self._v4l2_read_loop, daemon=True)
                     self.stream_thread.start()
-                    logger.info(f"[{self.sensor_id}] Initialized direct V4L2 streaming on {self.device_node} ({self.width}x{self.height}, {self.frame_size} bytes)")
+                    logger.info(f"[{self.sensor_id}] Initialized direct V4L2 streaming on {self.device_node} ({self.width}x{self.height}, stride {self.stride}, {self.frame_size} bytes)")
                     return
                 else:
                     self.v4l2_proc.terminate()
@@ -222,6 +225,19 @@ class SensorDriver:
         logger.info(f"[{self.sensor_id}] Hardware camera not opened. Using fallback generator.")
         self.use_fallback = True
 
+    def _decode_v4l2_frame(self, raw):
+        from PIL import Image
+        stride = getattr(self, "stride", self.width)
+        if stride and stride != self.width:
+            img = Image.frombytes('L', (self.width, self.height), raw, 'raw', 'L', stride, 1)
+        else:
+            img = Image.frombytes('L', (self.width, self.height), raw)
+
+        # Crop optical black borders on VD55G1 (804x704 pad -> clean 800x700)
+        if self.width == 804 and self.height == 704:
+            img = img.crop((2, 2, 802, 702))
+        return img
+
     def _v4l2_read_loop(self):
         from PIL import Image
         import fcntl, termios, array
@@ -256,7 +272,7 @@ class SensorDriver:
                 now = time.time()
                 # Rate-limit JPEG compression to target FPS
                 if now - last_encode_time >= min_interval:
-                    img = Image.frombytes('L', (self.width, self.height), raw)
+                    img = self._decode_v4l2_frame(raw)
                     buf = io.BytesIO()
                     img.save(buf, format='JPEG', quality=75)
                     self.latest_jpeg = buf.getvalue()

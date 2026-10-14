@@ -146,8 +146,9 @@ async def ping_edge(device_id: str, edge_data: dict, session: aiohttp.ClientSess
     edge_data["online"] = False
 
 
-def find_hotspot_pi_ip():
-    """Finds Raspberry Pi IP in ARP table on the mobile hotspot subnet (192.168.137.x)."""
+def get_hotspot_client_ips():
+    """Finds all client IPs in ARP table on the mobile hotspot subnet (192.168.137.x)."""
+    ips = []
     try:
         import subprocess
         out = subprocess.check_output("arp -a", shell=True, text=True, timeout=2)
@@ -165,10 +166,10 @@ def find_hotspot_pi_ip():
                 if len(parts) >= 2 and parts[0].startswith("192.168.137."):
                     ip = parts[0]
                     if ip not in ["192.168.137.1", "192.168.137.255"]:
-                        return ip
+                        ips.append(ip)
     except Exception:
         pass
-    return None
+    return ips
 
 
 async def background_poll_edges():
@@ -178,22 +179,49 @@ async def background_poll_edges():
             async with aiohttp.ClientSession() as session:
                 tasks = [
                     ping_edge(did, edata, session)
-                    for did, edata in known_edges.items()
+                    for did, edata in list(known_edges.items())
                 ]
                 if tasks:
                     await asyncio.gather(*tasks)
 
-            # Auto-discover Pi on hotspot if edge-pi-zero-01 is offline
-            pi_edge = known_edges.get("edge-pi-zero-01")
-            if pi_edge and not pi_edge.get("online"):
-                discovered_ip = find_hotspot_pi_ip()
-                if discovered_ip and discovered_ip != pi_edge.get("host"):
-                    logger.info(f"Auto-discovered Pi on hotspot: updating {pi_edge.get('host')} -> {discovered_ip}")
-                    pi_edge["host"] = discovered_ip
-                    pi_edge["url"] = f"http://{discovered_ip}:{pi_edge.get('port', 5001)}"
-                    save_registry()
-                    async with aiohttp.ClientSession() as session:
-                        await ping_edge("edge-pi-zero-01", pi_edge, session)
+                # Check hotspot subnet for any active edge daemons
+                hotspot_ips = get_hotspot_client_ips()
+                for hip in hotspot_ips:
+                    already_online = any(e.get("host") == hip and e.get("online") for e in known_edges.values())
+                    if already_online:
+                        continue
+                    
+                    probe_url = f"http://{hip}:5001/api/status"
+                    try:
+                        async with session.get(probe_url, timeout=aiohttp.ClientTimeout(total=1.2)) as probe_resp:
+                            if probe_resp.status == 200:
+                                pdata = await probe_resp.json()
+                                dev_id = pdata.get("device_id")
+                                if dev_id:
+                                    if dev_id in known_edges:
+                                        if known_edges[dev_id].get("host") != hip:
+                                            logger.info(f"Auto-updating {dev_id} to new hotspot IP: {hip}")
+                                            known_edges[dev_id]["host"] = hip
+                                            known_edges[dev_id]["url"] = f"http://{hip}:5001"
+                                            save_registry()
+                                    else:
+                                        logger.info(f"Auto-registering new edge discovered on hotspot: {dev_id} ({hip})")
+                                        known_edges[dev_id] = {
+                                            "device_id": dev_id,
+                                            "device_name": pdata.get("device_name", dev_id),
+                                            "host": hip,
+                                            "port": 5001,
+                                            "url": f"http://{hip}:5001",
+                                            "online": True,
+                                            "last_seen": time.time(),
+                                            "sensors": pdata.get("sensors", []),
+                                            "modalities": pdata.get("modalities", []),
+                                            "collection": pdata.get("collection", {}),
+                                            "network": pdata.get("network", {})
+                                        }
+                                        save_registry()
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Poll cycle error: {e}")
         await asyncio.sleep(2.0)
@@ -211,10 +239,20 @@ async def on_startup():
 @app.get("/api/info")
 async def get_system_info():
     ip = get_local_ip()
+    tunnel_url = "https://marvel-reconstruction-atm-planning.trycloudflare.com"
+    cfg_file = os.path.join(STATIC_DIR, "config.json")
+    if os.path.exists(cfg_file):
+        try:
+            with open(cfg_file, "r") as f:
+                c = json.load(f)
+                tunnel_url = c.get("default_hub_url", tunnel_url)
+        except Exception:
+            pass
     return {
         "server_ip": ip,
         "server_port": 8000,
         "mobile_url": f"http://{ip}:8000",
+        "tunnel_url": tunnel_url,
         "display_enabled": display_enabled,
         "total_edges": len(known_edges),
         "online_edges": sum(1 for e in known_edges.values() if e.get("online")),

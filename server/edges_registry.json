@@ -2,18 +2,57 @@
   "edges": {
     "edge-pi-zero-01": {
       "device_id": "edge-pi-zero-01",
-      "device_name": "Raspberry Pi Zero (STEVAL-55G0MBI)",
+      "device_name": "Raspberry Pi Zero v1.1 (Lab)",
       "host": "192.168.137.214",
       "port": 5001,
       "url": "http://192.168.137.214:5001",
       "online": true,
-      "last_seen": 0,
+      "last_seen": 1791969357.5576735,
       "sensors": [
         {
           "id": "rgb-steval",
           "modality": "rgb",
           "name": "STEVAL-55G0MBI PCB4189D (VD55G0)",
           "resolution": "640x600",
+          "fps": 15
+        }
+      ],
+      "collection": {
+        "is_recording": false,
+        "session_id": null,
+        "session_dir": null,
+        "duration_seconds": 0,
+        "frame_counts": {},
+        "storage_root": "/home/pi/edge_data",
+        "disk_free_gb": 22.38,
+        "disk_total_gb": 28.05,
+        "disk_used_percent": 20.2
+      },
+      "latency_ms": 83.4,
+      "modalities": [
+        "rgb"
+      ],
+      "network": {
+        "type": "hotspot",
+        "interface": "wlan0",
+        "ip": "192.168.137.214",
+        "ssid": "karol"
+      }
+    },
+    "edge-pi-zero-02": {
+      "device_id": "edge-pi-zero-02",
+      "device_name": "Raspberry Pi Zero W #2 (STEVAL-55G1)",
+      "host": "192.168.137.201",
+      "port": 5001,
+      "url": "http://192.168.137.201:5001",
+      "online": true,
+      "last_seen": 0,
+      "sensors": [
+        {
+          "id": "rgb-steval",
+          "modality": "rgb",
+          "name": "STEVAL-55G1 PCB4189D (VD55G1)",
+          "resolution": "804x704",
           "fps": 15
         }
       ],
