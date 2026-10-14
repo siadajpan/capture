@@ -146,8 +146,33 @@ async def ping_edge(device_id: str, edge_data: dict, session: aiohttp.ClientSess
     edge_data["online"] = False
 
 
+def find_hotspot_pi_ip():
+    """Finds Raspberry Pi IP in ARP table on the mobile hotspot subnet (192.168.137.x)."""
+    try:
+        import subprocess
+        out = subprocess.check_output("arp -a", shell=True, text=True, timeout=2)
+        in_hotspot_section = False
+        for line in out.splitlines():
+            line_str = line.strip()
+            if "192.168.137." in line_str and "Interface:" in line_str:
+                in_hotspot_section = True
+                continue
+            elif "Interface:" in line_str:
+                in_hotspot_section = False
+            
+            if in_hotspot_section:
+                parts = line_str.split()
+                if len(parts) >= 2 and parts[0].startswith("192.168.137."):
+                    ip = parts[0]
+                    if ip not in ["192.168.137.1", "192.168.137.255"]:
+                        return ip
+    except Exception:
+        pass
+    return None
+
+
 async def background_poll_edges():
-    """Periodically queries all edge devices for status and telemetry."""
+    """Periodically queries all edge devices for status and telemetry with auto-discovery."""
     while True:
         try:
             async with aiohttp.ClientSession() as session:
@@ -157,6 +182,18 @@ async def background_poll_edges():
                 ]
                 if tasks:
                     await asyncio.gather(*tasks)
+
+            # Auto-discover Pi on hotspot if edge-pi-zero-01 is offline
+            pi_edge = known_edges.get("edge-pi-zero-01")
+            if pi_edge and not pi_edge.get("online"):
+                discovered_ip = find_hotspot_pi_ip()
+                if discovered_ip and discovered_ip != pi_edge.get("host"):
+                    logger.info(f"Auto-discovered Pi on hotspot: updating {pi_edge.get('host')} -> {discovered_ip}")
+                    pi_edge["host"] = discovered_ip
+                    pi_edge["url"] = f"http://{discovered_ip}:{pi_edge.get('port', 5001)}"
+                    save_registry()
+                    async with aiohttp.ClientSession() as session:
+                        await ping_edge("edge-pi-zero-01", pi_edge, session)
         except Exception as e:
             logger.debug(f"Poll cycle error: {e}")
         await asyncio.sleep(2.0)
