@@ -41,15 +41,16 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
             <circle cx="12" cy="20" r="1"></circle>
           </svg>
-          <span id="hubHostLabel">Local Hub</span>
+          <span id="hubHostLabel">Connecting...</span>
         </div>
 
-        <button class="icon-btn" id="openAddDeviceBtn" title="Edge Devices Management">
+        <button class="icon-btn" id="openFleetBtn" title="Device Fleet & Availability Menu">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
           </svg>
-          <span class="btn-text">Edges (<span id="edgeCountBadge">0</span>)</span>
+          <span class="btn-text">Fleet (<span id="edgeCountBadge">0</span>)</span>
         </button>
       </div>
     </header>
@@ -153,62 +154,96 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
     </footer>
   </div>
 
-  <!-- Settings & Device Management Modal -->
+  <!-- Fleet Management & Hub Settings Modal -->
   <div class="modal-backdrop" id="modalBackdrop">
-    <div class="modal-card">
+    <div class="modal-card wide-modal">
       <div class="modal-header">
-        <h3 id="modalTitle">capture.me.uk &bull; Hub & Edge Settings</h3>
-        <button class="close-btn" id="closeModalBtn">&times;</button>
+        <div class="modal-header-tabs">
+          <button type="button" class="modal-tab-btn active" id="tabFleetBtn" data-tab="fleet">
+            <span>🌐</span>
+            <span>Fleet & Availability</span>
+            <span class="tab-badge" id="modalFleetBadge">0/0</span>
+          </button>
+          <button type="button" class="modal-tab-btn" id="tabAddBtn" data-tab="add">
+            <span>➕</span>
+            <span>Add Device</span>
+          </button>
+          <button type="button" class="modal-tab-btn" id="tabConfigBtn" data-tab="config">
+            <span>⚙️</span>
+            <span>Hub & Tunnel</span>
+          </button>
+        </div>
+        <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button>
       </div>
 
       <div class="modal-body">
-        <div class="phone-connect-box">
-          <h4>🌐 Edge Hub Endpoint (API & Proxy)</h4>
-          <p>Specify the address of your Edge Hub or Cloudflare Tunnel that connects to your Raspberry Pi devices:</p>
-          <div style="display:flex; gap:8px; margin-bottom:8px;">
-            <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="https://lynn-oak-loved-contain.trycloudflare.com">
-            <button class="copy-btn" id="saveHubUrlBtn">Save</button>
+        <!-- TAB 1: FLEET AVAILABILITY -->
+        <div class="modal-tab-pane active" id="tabPaneFleet">
+          <div class="fleet-header-summary">
+            <div class="fleet-stats">
+              <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span>
+              <span class="stat-pill online-pill"><strong id="summaryOnlineEdges">0</strong> Available Online</span>
+            </div>
+            <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+              </svg>
+              <span>Ping / Refresh</span>
+            </button>
           </div>
-          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
-            <button type="button" class="pill active" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('https://lynn-oak-loved-contain.trycloudflare.com')">☁️ Cloudflare Live Tunnel</button>
-            <button type="button" class="pill" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://10.97.194.138:8000')">💻 Local PC Hub</button>
-            <button type="button" class="pill" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://10.97.194.51:5001')">🍓 Direct Pi Zero</button>
+
+          <div class="fleet-cards-list" id="fleetCardsContainer">
+            <!-- Dynamically populated -->
           </div>
-          <small style="color:var(--text-muted); font-size:0.75rem;">Can be a Cloudflare Tunnel URL, Local IP (e.g. 10.97.194.138:8000), or Direct Pi IP.</small>
         </div>
 
-        <hr class="divider">
-
-        <h4>Add New Edge Device</h4>
-        <form id="addEdgeForm" class="add-edge-form">
-          <div class="form-row">
-            <div class="form-group flex-2">
-              <label>Device Name / Label</label>
-              <input type="text" id="edgeNameInput" placeholder="Raspberry Pi Zero v1.1 (Lab)" required>
-            </div>
-            <div class="form-group flex-1">
-              <label>Device ID</label>
-              <input type="text" id="edgeIdInput" placeholder="edge-pi-zero-01" required>
-            </div>
+        <!-- TAB 2: ADD NEW DEVICE -->
+        <div class="modal-tab-pane" id="tabPaneAdd">
+          <div class="phone-connect-box">
+            <h4>➕ Register New Edge Device</h4>
+            <p>Connect another Raspberry Pi Zero, 4/5, or Linux camera rig to the centralized aggregator:</p>
           </div>
-          <div class="form-row">
-            <div class="form-group flex-2">
-              <label>IP Address / Hostname</label>
-              <input type="text" id="edgeHostInput" placeholder="192.168.1.150" required>
+          <form id="addEdgeForm" class="add-edge-form">
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label>Device Name / Label</label>
+                <input type="text" id="edgeNameInput" placeholder="Raspberry Pi Zero (STEVAL-55G0MBI)" required>
+              </div>
+              <div class="form-group flex-1">
+                <label>Device ID</label>
+                <input type="text" id="edgeIdInput" placeholder="edge-pi-zero-02" required>
+              </div>
             </div>
-            <div class="form-group flex-1">
-              <label>Port</label>
-              <input type="number" id="edgePortInput" value="5001" required>
+            <div class="form-row">
+              <div class="form-group flex-2">
+                <label>IP Address / Hostname / Tailscale</label>
+                <input type="text" id="edgeHostInput" placeholder="192.168.137.240" required>
+              </div>
+              <div class="form-group flex-1">
+                <label>Port</label>
+                <input type="number" id="edgePortInput" value="5001" required>
+              </div>
             </div>
+            <button type="submit" class="submit-btn">+ Add Edge Device</button>
+          </form>
+        </div>
+
+        <!-- TAB 3: HUB & TUNNEL CONFIG -->
+        <div class="modal-tab-pane" id="tabPaneConfig">
+          <div class="phone-connect-box">
+            <h4>🌐 Edge Hub & Cloudflare Tunnel Endpoint</h4>
+            <p>Specify the proxy hub or Cloudflare Tunnel that bridges browser visitors to your edge fleet:</p>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="https://marvel-reconstruction-atm-planning.trycloudflare.com">
+              <button type="button" class="copy-btn" id="saveHubUrlBtn">Save</button>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+              <button type="button" class="pill active" id="btnPresetDefault" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;">☁️ Reset to Server Default (config.json)</button>
+              <button type="button" class="pill" id="btnPresetLocal" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://127.0.0.1:8000')">💻 Local PC Hub (8000)</button>
+              <button type="button" class="pill" id="btnPresetDirectPi" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://192.168.137.240:5001')">🍓 Direct Pi (5001)</button>
+            </div>
+            <small style="color:var(--text-muted); font-size:0.75rem;">Visitors to <code>capture.me.uk</code> automatically load the default endpoint from <code>/config.json</code>.</small>
           </div>
-          <button type="submit" class="submit-btn">+ Add Edge Device</button>
-        </form>
-
-        <hr class="divider">
-
-        <h4>Connected Edge Nodes</h4>
-        <div class="edge-list-container" id="edgeListContainer">
-          <!-- Injected dynamically -->
         </div>
       </div>
     </div>
@@ -219,22 +254,35 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
     (function () {
       'use strict';
 
-      // Hub Endpoint detection
-      let savedHub = localStorage.getItem('capture_hub_url');
-      if (savedHub && (savedHub.includes('192.168.41.78') || savedHub.includes('192.168.1.100') || savedHub.includes('192.168.1.150'))) {
-        savedHub = null;
-        localStorage.removeItem('capture_hub_url');
+      let clientConfig = null;
+      let hubBaseUrl = '';
+
+      async function loadClientConfig() {
+        try {
+          const res = await fetch('/config.json?v=' + Date.now());
+          if (res.ok) {
+            clientConfig = await res.json();
+          }
+        } catch (e) {
+          console.warn('Could not load /config.json:', e);
+        }
+
+        const defaultHub = clientConfig?.default_hub_url || (
+          (window.location.port === '8000') 
+            ? window.location.origin 
+            : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+              ? 'http://127.0.0.1:8000'
+              : 'https://marvel-reconstruction-atm-planning.trycloudflare.com'
+        );
+
+        let savedHub = localStorage.getItem('capture_hub_url');
+        if (savedHub && (savedHub.includes('192.168.41.78') || savedHub.includes('192.168.1.100') || savedHub.includes('192.168.1.150') || savedHub.includes('lynn-oak'))) {
+          savedHub = null;
+          localStorage.removeItem('capture_hub_url');
+        }
+
+        hubBaseUrl = savedHub || defaultHub;
       }
-
-      const defaultHub = (window.location.port === '8000') 
-        ? window.location.origin 
-        : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-          ? 'http://127.0.0.1:8000'
-          : (window.location.protocol === 'https:')
-            ? 'https://lynn-oak-loved-contain.trycloudflare.com'
-            : 'http://10.97.194.138:8000';
-
-      let hubBaseUrl = savedHub || defaultHub;
 
       const state = {
         viewMode: 'device',
@@ -250,6 +298,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         hubConfigBadge: document.getElementById('hubConfigBadge'),
         hubUrlInput: document.getElementById('hubUrlInput'),
         saveHubUrlBtn: document.getElementById('saveHubUrlBtn'),
+        btnPresetDefault: document.getElementById('btnPresetDefault'),
         edgeCountBadge: document.getElementById('edgeCountBadge'),
         onlineEdgesCount: document.getElementById('onlineEdgesCount'),
         totalSensorsCount: document.getElementById('totalSensorsCount'),
@@ -269,21 +318,29 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         feedsViewport: document.getElementById('feedsViewport'),
 
         modalBackdrop: document.getElementById('modalBackdrop'),
-        openAddDeviceBtn: document.getElementById('openAddDeviceBtn'),
+        openFleetBtn: document.getElementById('openFleetBtn'),
         closeModalBtn: document.getElementById('closeModalBtn'),
         addEdgeForm: document.getElementById('addEdgeForm'),
         edgeNameInput: document.getElementById('edgeNameInput'),
         edgeIdInput: document.getElementById('edgeIdInput'),
         edgeHostInput: document.getElementById('edgeHostInput'),
         edgePortInput: document.getElementById('edgePortInput'),
-        edgeListContainer: document.getElementById('edgeListContainer')
+        fleetCardsContainer: document.getElementById('fleetCardsContainer'),
+        modalFleetBadge: document.getElementById('modalFleetBadge'),
+        summaryTotalEdges: document.getElementById('summaryTotalEdges'),
+        summaryOnlineEdges: document.getElementById('summaryOnlineEdges'),
+        refreshFleetBtn: document.getElementById('refreshFleetBtn'),
+        tabFleetBtn: document.getElementById('tabFleetBtn'),
+        tabAddBtn: document.getElementById('tabAddBtn'),
+        tabConfigBtn: document.getElementById('tabConfigBtn')
       };
 
-      function init() {
-        el.hubUrlInput.value = hubBaseUrl;
+      async function init() {
+        await loadClientConfig();
+        if (el.hubUrlInput) el.hubUrlInput.value = hubBaseUrl;
         updateHubLabel();
         bindEvents();
-        pollData();
+        await pollData();
         state.pollTimer = setInterval(pollData, 1800);
       }
 
@@ -295,6 +352,17 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           el.hubHostLabel.textContent = hubBaseUrl;
         }
       }
+
+      window.switchModalTab = function (tabName) {
+        document.querySelectorAll('.modal-tab-btn').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        document.querySelectorAll('.modal-tab-pane').forEach(pane => {
+          pane.classList.remove('active');
+        });
+        const target = document.getElementById('tabPane' + tabName.charAt(0).toUpperCase() + tabName.slice(1));
+        if (target) target.classList.add('active');
+      };
 
       function bindEvents() {
         el.toggleDisplayBtn.addEventListener('click', toggleDisplay);
@@ -312,12 +380,54 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           renderFeeds();
         });
 
-        el.openAddDeviceBtn.addEventListener('click', () => el.modalBackdrop.classList.add('open'));
-        el.hubConfigBadge.addEventListener('click', () => el.modalBackdrop.classList.add('open'));
+        if (el.openFleetBtn) {
+          el.openFleetBtn.addEventListener('click', () => {
+            window.switchModalTab('fleet');
+            el.modalBackdrop.classList.add('open');
+          });
+        }
+
+        if (el.hubConfigBadge) {
+          el.hubConfigBadge.addEventListener('click', () => {
+            window.switchModalTab('config');
+            el.modalBackdrop.classList.add('open');
+          });
+        }
+
         el.closeModalBtn.addEventListener('click', () => el.modalBackdrop.classList.remove('open'));
         el.modalBackdrop.addEventListener('click', (e) => {
           if (e.target === el.modalBackdrop) el.modalBackdrop.classList.remove('open');
         });
+
+        // Modal Tab Buttons
+        [el.tabFleetBtn, el.tabAddBtn, el.tabConfigBtn].forEach(tabBtn => {
+          if (tabBtn) {
+            tabBtn.addEventListener('click', () => window.switchModalTab(tabBtn.dataset.tab));
+          }
+        });
+
+        if (el.refreshFleetBtn) {
+          el.refreshFleetBtn.addEventListener('click', async () => {
+            el.refreshFleetBtn.textContent = 'Pinging...';
+            await pollData();
+            setTimeout(() => {
+              el.refreshFleetBtn.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                </svg>
+                <span>Ping / Refresh</span>
+              `;
+            }, 600);
+          });
+        }
+
+        if (el.btnPresetDefault) {
+          el.btnPresetDefault.addEventListener('click', async () => {
+            await loadClientConfig();
+            const target = clientConfig?.default_hub_url || 'https://marvel-reconstruction-atm-planning.trycloudflare.com';
+            window.setQuickHub(target);
+          });
+        }
 
         el.saveHubUrlBtn.addEventListener('click', () => {
           let val = el.hubUrlInput.value.trim();
@@ -355,17 +465,19 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
           updateHUD();
           renderFeeds();
-          renderModalEdges();
+          renderFleetCards();
         } catch (err) {
+          const defaultUrl = clientConfig?.default_hub_url || 'https://marvel-reconstruction-atm-planning.trycloudflare.com';
           el.feedsViewport.innerHTML = `
             <div class="empty-state">
-              <p>Cannot reach Edge Hub at <code>${hubBaseUrl}</code></p>
+              <p>Cannot reach Edge Hub at <code>${escapeHtml(hubBaseUrl)}</code></p>
               <div style="display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap;">
-                <button class="submit-btn" onclick="window.setQuickHub('https://lynn-oak-loved-contain.trycloudflare.com')">Connect Live Cloudflare Tunnel</button>
+                <button class="submit-btn" onclick="window.setQuickHub('${defaultUrl}')">Connect Default Server Tunnel</button>
                 <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('hubConfigBadge').click()">Configure Endpoint</button>
               </div>
             </div>
           `;
+          renderFleetCards();
         }
       }
 
@@ -592,17 +704,130 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         `;
       }
 
-      function renderModalEdges() {
-        if (!el.edgeListContainer) return;
-        el.edgeListContainer.innerHTML = state.edges.map(e => `
-          <div class="edge-item-row">
-            <div class="edge-item-info">
-              <span class="edge-item-name">${escapeHtml(e.device_name || e.device_id)}</span>
-              <span class="edge-item-url">${escapeHtml(e.host)}:${e.port} &bull; ${e.online ? '<span style="color:var(--accent-green)">ONLINE</span>' : '<span style="color:var(--text-dim)">OFFLINE</span>'}</span>
+      function timeAgo(ts) {
+        if (!ts) return 'Never';
+        const diffSec = Math.floor(Date.now() / 1000 - ts);
+        if (diffSec < 5) return 'Just now';
+        if (diffSec < 60) return `${diffSec}s ago`;
+        if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+        return `${Math.floor(diffSec / 3600)}h ago`;
+      }
+
+      window.focusDeviceFeed = function (deviceId) {
+        el.modalBackdrop.classList.remove('open');
+        if (state.viewMode !== 'device') switchViewMode('device');
+        setTimeout(() => {
+          const card = document.getElementById('card-' + deviceId);
+          if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.style.outline = '2px solid var(--accent-cyan)';
+            setTimeout(() => card.style.outline = '', 2000);
+          }
+        }, 150);
+      };
+
+      function renderFleetCards() {
+        if (!el.fleetCardsContainer) return;
+
+        const total = state.edges.length;
+        const online = state.edges.filter(e => e.online).length;
+
+        if (el.modalFleetBadge) el.modalFleetBadge.textContent = `${online}/${total}`;
+        if (el.summaryTotalEdges) el.summaryTotalEdges.textContent = total;
+        if (el.summaryOnlineEdges) el.summaryOnlineEdges.textContent = online;
+
+        if (state.edges.length === 0) {
+          el.fleetCardsContainer.innerHTML = `
+            <div class="empty-state" style="padding: 24px;">
+              <p>No edge devices registered in fleet yet.</p>
+              <button class="submit-btn" style="margin-top: 10px;" onclick="window.switchModalTab('add')">+ Register First Device</button>
             </div>
-            <button class="delete-edge-btn" onclick="window.removeEdgeDevice('${e.device_id}')">Remove</button>
-          </div>
-        `).join('');
+          `;
+          return;
+        }
+
+        el.fleetCardsContainer.innerHTML = state.edges.map(edge => {
+          const isOnline = Boolean(edge.online);
+          const net = edge.network || {};
+          let netLabel = edge.host ? `${edge.host}:${edge.port}` : 'Default';
+          let netIcon = '🌐';
+          if (net.type === 'hotspot') {
+            netIcon = '📱';
+            netLabel = `Hotspot (${escapeHtml(net.ssid || 'Wi-Fi')}) • ${escapeHtml(net.ip || edge.host)}`;
+          } else if (net.type === '5g') {
+            netIcon = '📶';
+            netLabel = `5G Cellular (${escapeHtml(net.interface || 'wwan0')}) • ${escapeHtml(net.ip || edge.host)}`;
+          } else if (net.type === 'ethernet') {
+            netIcon = '🔌';
+            netLabel = `Ethernet (${escapeHtml(net.ip || edge.host)})`;
+          }
+
+          const sensors = edge.sensors || [];
+          const sensorDesc = sensors.length > 0 
+            ? sensors.map(s => `${escapeHtml(s.name || s.id)} (${s.resolution || '640x600'} @ ${s.fps || 15}fps)`).join(', ')
+            : 'No sensors detected';
+
+          const col = edge.collection || {};
+          const storageDesc = col.disk_free_gb !== undefined 
+            ? `${col.disk_free_gb} GB free of ${col.disk_total_gb || '--'} GB`
+            : 'SD Card storage ready';
+
+          const latency = edge.latency_ms ? `${edge.latency_ms} ms ping` : 'Active';
+          const lastSeenStr = edge.last_seen 
+            ? timeAgo(edge.last_seen)
+            : 'Never';
+
+          return `
+            <div class="fleet-device-card ${isOnline ? 'online' : 'offline'}">
+              <div class="fleet-card-top">
+                <div class="fleet-device-title-group">
+                  <span class="fleet-device-name">
+                    <span class="status-indicator ${isOnline ? '' : 'offline'}"></span>
+                    ${escapeHtml(edge.device_name || edge.device_id)}
+                  </span>
+                  <span class="fleet-device-id">ID: <code>${escapeHtml(edge.device_id)}</code> &bull; Host: <code>${escapeHtml(edge.host)}:${edge.port}</code></span>
+                </div>
+                <div class="fleet-status-badge ${isOnline ? 'online' : 'offline'}">
+                  ${isOnline ? `🟢 AVAILABLE (${latency})` : `⚪ OFFLINE (${lastSeenStr})`}
+                </div>
+              </div>
+
+              <div class="fleet-details-grid">
+                <div class="fleet-detail-item">
+                  <span>${netIcon}</span>
+                  <span><strong>Connection:</strong> ${netLabel}</span>
+                </div>
+                <div class="fleet-detail-item">
+                  <span>📷</span>
+                  <span><strong>Sensors:</strong> ${sensorDesc}</span>
+                </div>
+                <div class="fleet-detail-item">
+                  <span>💾</span>
+                  <span><strong>Storage:</strong> ${storageDesc}</span>
+                </div>
+                <div class="fleet-detail-item">
+                  <span>⏱️</span>
+                  <span><strong>Status:</strong> ${isOnline ? (col.is_recording ? `Recording (#${col.duration_seconds || 0}s)` : 'Standby / Ready') : 'Unreachable'}</span>
+                </div>
+              </div>
+
+              <div class="fleet-card-actions">
+                ${isOnline ? `
+                  <button class="btn-action-view" onclick="window.focusDeviceFeed('${edge.device_id}')">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                    View Feed
+                  </button>
+                ` : ''}
+                <button class="btn-action-remove" onclick="window.removeEdgeDevice('${edge.device_id}')">
+                  Remove Device
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('');
       }
 
       async function handleAddEdge(e) {

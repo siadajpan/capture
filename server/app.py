@@ -127,16 +127,19 @@ class CollectionActionRequest(BaseModel):
 
 async def ping_edge(device_id: str, edge_data: dict, session: aiohttp.ClientSession):
     url = f"http://{edge_data['host']}:{edge_data['port']}/api/status"
+    t0 = time.time()
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
             if resp.status == 200:
                 data = await resp.json()
+                edge_data["latency_ms"] = round((time.time() - t0) * 1000, 1)
                 edge_data["online"] = True
                 edge_data["last_seen"] = time.time()
                 edge_data["device_name"] = data.get("device_name", edge_data.get("device_name"))
                 edge_data["sensors"] = data.get("sensors", [])
                 edge_data["modalities"] = data.get("modalities", [])
                 edge_data["collection"] = data.get("collection", {})
+                edge_data["network"] = data.get("network", {})
                 return
     except Exception:
         pass

@@ -673,6 +673,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 "port": int(self.daemon_ref.config.get("port", 5001)),
                 "online": True,
                 "last_seen": time.time(),
+                "network": self.daemon_ref.get_network_info(),
                 "sensors": sensor_info,
                 "modalities": list(set(s.modality for s in self.daemon_ref.sensors)),
                 "collection": self.daemon_ref.collector.get_status()
@@ -697,6 +698,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             "device_name": self.daemon_ref.config.get("device_name"),
             "online": True,
             "timestamp": datetime.now().isoformat(),
+            "network": self.daemon_ref.get_network_info(),
             "sensors": sensor_info,
             "modalities": list(set(s.modality for s in self.daemon_ref.sensors)),
             "collection": collector_status
@@ -787,6 +789,39 @@ class EdgeDaemon:
             if s.sensor_id == target or s.modality.lower() == target.lower():
                 return s
         return None
+
+    def get_network_info(self):
+        net_type = "unknown"
+        iface = "unknown"
+        ip_addr = "127.0.0.1"
+        ssid = None
+        try:
+            res = subprocess.run(["ip", "route", "show", "default"], stdout=subprocess.PIPE, text=True, timeout=2)
+            if "dev " in res.stdout:
+                iface = res.stdout.split("dev ")[1].split()[0]
+            if iface.startswith("wlan"):
+                net_type = "hotspot"
+                try:
+                    iw_res = subprocess.run(["/sbin/iwconfig", iface], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                    for line in iw_res.stdout.splitlines():
+                        if 'ESSID:"' in line:
+                            ssid = line.split('ESSID:"')[1].split('"')[0]
+                except Exception:
+                    pass
+                if not ssid:
+                    ssid = "Wi-Fi Hotspot"
+            elif any(iface.startswith(p) for p in ["wwan", "usb", "ppp", "qmi", "lte"]):
+                net_type = "5g"
+            elif iface.startswith("eth"):
+                net_type = "ethernet"
+            ip_res = subprocess.run(["ip", "-brief", "addr", "show", iface], stdout=subprocess.PIPE, text=True, timeout=2)
+            if ip_res.stdout:
+                parts = ip_res.stdout.split()
+                if len(parts) >= 3:
+                    ip_addr = parts[2].split("/")[0]
+        except Exception:
+            pass
+        return {"type": net_type, "interface": iface, "ip": ip_addr, "ssid": ssid}
 
     def start_server(self):
         host = self.config.get("host", "0.0.0.0")
