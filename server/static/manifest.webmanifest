@@ -1,0 +1,16 @@
+{
+  "name": "Capture Edge Hub",
+  "short_name": "Capture",
+  "description": "Multi-Sensor Edge Capture Platform - capture.me.uk",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0d14",
+  "theme_color": "#00e5ff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -360,6 +360,32 @@ async def io_bytes_gen(data: bytes):
 # Static Files & Mobile Dashboard UI
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+if os.path.exists(os.path.join(STATIC_DIR, "_astro")):
+    app.mount("/_astro", StaticFiles(directory=os.path.join(STATIC_DIR, "_astro")), name="astro")
+
+
+@app.get("/config.json")
+async def serve_config():
+    cfg_file = os.path.join(STATIC_DIR, "config.json")
+    if os.path.exists(cfg_file):
+        return FileResponse(cfg_file, media_type="application/json")
+    return JSONResponse({"default_hub_url": "https://marvel-reconstruction-atm-planning.trycloudflare.com"})
+
+
+@app.get("/favicon.svg")
+async def serve_favicon_svg():
+    f = os.path.join(STATIC_DIR, "favicon.svg")
+    if os.path.exists(f):
+        return FileResponse(f, media_type="image/svg+xml")
+    raise HTTPException(status_code=404)
+
+
+@app.get("/favicon.ico")
+async def serve_favicon_ico():
+    f = os.path.join(STATIC_DIR, "favicon.ico")
+    if os.path.exists(f):
+        return FileResponse(f, media_type="image/x-icon")
+    raise HTTPException(status_code=404)
 
 
 @app.get("/", response_class=HTMLResponse)
