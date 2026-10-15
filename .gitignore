@@ -32,3 +32,4 @@ data_storage/
 *.jpg
 cloudflared.exe
 scratch/
+server/cache/

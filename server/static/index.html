@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>CAPTURE.ME.UK v1.4 | Multi-Sensor Edge Collector</title><meta name="description" content="Cloudflare-hosted mobile dashboard to monitor live streams and synchronize recording across multi-sensor edge devices."><meta name="theme-color" content="#00e5ff"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="manifest" href="/manifest.webmanifest"><!-- Fonts --><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="/_astro/index.DXOXsRL_.css"></head> <body> <div class="app-container"> <!-- Slim Modern Top Bar --> <header class="top-nav-slim"> <div class="nav-left"> <div class="brand-badge"> <div class="pulse-dot"></div> <span class="brand-title">CAPTURE <small style="font-size:0.65rem;color:var(--accent-cyan);vertical-align:middle;font-weight:600;opacity:0.85;margin-left:2px;">v1.4</small></span> </div> <div class="nav-segmented"> <button id="viewByModalityBtn" class="nav-seg-btn active" type="button" title="Group by Sensors">Sensors</button> <button id="viewByDeviceBtn" class="nav-seg-btn" type="button" title="Group by Device">Devices</button> <button id="viewPlaybackBtn" class="nav-seg-btn" type="button" title="View Recorded Frames & Scrubber">🎞️ Playback</button> </div> <div class="filter-pills" id="modalityPillsBar"> <button class="pill active" data-mod="all" type="button">All</button> <button class="pill" data-mod="rgb" type="button">RGB</button> <button class="pill" data-mod="thermal" type="button">Thermal</button> <button class="pill" data-mod="depth" type="button">Depth</button> </div> </div> <div class="nav-right"> <!-- Live Video Toggle Pill --> <button id="quickDisplayBtn" class="nav-pill-btn active" type="button" title="Toggle Live Feeds"> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path> <circle cx="12" cy="12" r="3"></circle> </svg> <span id="quickDisplayLabel">LIVE</span> </button> <!-- Recording Pill --> <button id="quickRecordBtn" class="nav-pill-btn record-pill" type="button" title="Toggle Synchronized Edge Recording"> <div class="record-dot"></div> <span id="quickRecordLabel">REC</span> </button> <!-- System & Tunnel Menu Button --> <button id="openMenuBtn" class="menu-btn" type="button" title="Open Settings & System Menu"> <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <line x1="3" y1="12" x2="21" y2="12"></line> <line x1="3" y1="6" x2="21" y2="6"></line> <line x1="3" y1="18" x2="21" y2="18"></line> </svg> <span class="menu-btn-label">Menu</span> <span class="menu-badge" id="menuEdgeBadge">0</span> </button> </div> </header> <!-- Main Dynamic Feed Container (Centered 3/2 Columns) --> <main class="feeds-viewport" id="feedsViewport"> <div class="loading-state"> <div class="spinner"></div> <p>Connecting to Edge Devices via capture.me.uk...</p> </div> </main> <!-- Playback & Historical Frame Scrubbing Studio --> <section class="playback-viewport" id="playbackViewport" style="display: none;"> <div class="playback-header-bar"> <div class="playback-header-left"> <span style="font-size:0.82rem; font-weight:700; color:var(--text-main); display:inline-flex; align-items:center; gap:6px;"> <span>🎞️</span> <span>Session:</span> </span> <select id="playbackSessionSelect" class="playback-select" title="Select recorded session"> <option value="">Loading sessions...</option> </select> <button id="refreshSessionsBtn" class="nav-seg-btn" type="button" style="padding: 4px 10px; font-size: 0.74rem;" title="Refresh Sessions">🔄 Refresh</button> </div> <div class="playback-header-right"> <span class="playback-badge-chip" id="playbackSessionMetaBadge">-- frames &bull; --s</span> <select id="playbackDeviceFilter" class="playback-select" title="Filter device / modality view"> <option value="all">Synchronized Fleet Grid (All Devices)</option> </select> </div> </div> <!-- Playback Grid of Cards --> <div class="playback-grid" id="playbackGrid"> <div class="empty-state" style="grid-column: 1 / -1; padding: 36px 16px;"> <p>Select a session to scrub and preview recorded frames.</p> </div> </div> <!-- Bottom Interactive Timeline Scrubber Dock --> <div class="playback-scrubber-dock" id="playbackScrubberDock"> <div class="playback-slider-row"> <input type="range" id="playbackSlider" class="timeline-slider" min="1" max="1" value="1" title="Drag to scrub through recorded frames"> </div> <div class="playback-controls-row"> <div class="transport-btn-group"> <button type="button" class="transport-btn" id="btnPlayFirst" title="First Frame (Home)">⏮</button> <button type="button" class="transport-btn" id="btnPlayPrev" title="Previous Frame (Left Arrow)">◀</button> <button type="button" class="transport-btn play-btn" id="btnPlayToggle" title="Play / Pause (Spacebar)">▶</button> <button type="button" class="transport-btn" id="btnPlayNext" title="Next Frame (Right Arrow)">▶</button> <button type="button" class="transport-btn" id="btnPlayLast" title="Last Frame (End)">⏭</button> </div> <div class="playback-hud-text"> <span>FRAME <strong class="playback-hud-frame" id="playbackHudFrame">1 / 1</strong></span> <span style="color:var(--text-dim);">|</span> <span id="playbackHudTime">+00:00.0s / 00:00.0s</span> </div> <div style="display:flex; align-items:center; gap:8px;"> <span style="font-size:0.75rem; color:var(--text-muted);">Speed:</span> <select id="playbackSpeedSelect" class="playback-speed-select"> <option value="0.5">0.5x</option> <option value="1" selected>1.0x (10fps)</option> <option value="2">2.0x (20fps)</option> </select> </div> </div> </div> </section> </div> <!-- Fleet Management & Hub Settings Modal --> <div class="modal-backdrop" id="modalBackdrop"> <div class="modal-card wide-modal"> <div class="modal-header"> <div class="modal-header-tabs"> <button type="button" class="modal-tab-btn active" id="tabOverviewBtn" data-tab="overview"> <span>🌐</span> <span>Overview & Tunnel</span> </button> <button type="button" class="modal-tab-btn" id="tabFleetBtn" data-tab="fleet"> <span>💻</span> <span>Fleet (<span id="modalFleetBadge">0/0</span>)</span> </button> <button type="button" class="modal-tab-btn" id="tabAddBtn" data-tab="add"> <span>➕</span> <span>Add Device</span> </button> <button type="button" class="modal-tab-btn" id="tabConfigBtn" data-tab="config"> <span>⚙️</span> <span>Hub Settings</span> </button> </div> <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button> </div> <div class="modal-body"> <!-- TAB 1: OVERVIEW & TUNNEL --> <div class="modal-tab-pane active" id="tabPaneOverview"> <!-- Cloudflare Tunnel Info Box --> <div class="tunnel-highlight-card"> <div class="tunnel-card-header"> <div class="tunnel-status-pill"> <span class="pulse-dot-green"></span> <span>CLOUDFLARE TUNNEL</span> </div> <span class="tunnel-badge-active">ONLINE</span> </div> <div class="tunnel-url-row"> <div class="tunnel-url-display" id="modalTunnelUrl">https://marvel-reconstruction-atm-planning.trycloudflare.com</div> <button type="button" class="copy-btn-tunnel" id="copyTunnelBtn" title="Copy Tunnel URL"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect> <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path> </svg> <span id="copyBtnText">Copy</span> </button> <a href="https://marvel-reconstruction-atm-planning.trycloudflare.com" target="_blank" rel="noopener" class="open-link-btn" id="openTunnelLink" title="Open in new window"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path> <polyline points="15 3 21 3 21 9"></polyline> <line x1="10" y1="14" x2="21" y2="3"></line> </svg> </a> </div> <div class="tunnel-meta-row"> <span><strong>Local LAN Hub:</strong> <code id="localIpLabel">http://192.168.137.1:8000</code></span> <span><strong>Custom Domain:</strong> <code>capture.me.uk</code></span> </div> </div> <!-- System Stats Grid --> <div class="menu-stats-grid"> <div class="menu-stat-card"> <span class="stat-num text-accent" id="menuSensorsCount">0</span> <span class="stat-sub">Active Sensors</span> </div> <div class="menu-stat-card"> <span class="stat-num text-green" id="menuOnlineEdges">0/0</span> <span class="stat-sub">Edges Online</span> </div> <div class="menu-stat-card"> <span class="stat-num" id="menuFreeStorage">--</span> <span class="stat-sub">SD Card Free</span> </div> <div class="menu-stat-card"> <span class="stat-num" id="menuRecDuration">00:00:00</span> <span class="stat-sub" id="menuRecStatusLabel">Standby</span> </div> </div> <!-- Synchronized Recording Controls --> <div class="menu-rec-section"> <div class="rec-section-header"> <h4>🔴 Edge Synchronized Recording</h4> <span class="badge-tag" id="menuRecBadge">IDLE</span> </div> <p class="rec-section-desc">Starts synchronized local MJPEG / raw frame recording simultaneously across all connected edge nodes to internal SD card storage.</p> <div class="rec-controls-bar"> <input type="text" id="recSessionLabelInput" placeholder="Session label" value="capture.me.uk Session" class="rec-label-input"> <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn"> <div class="record-symbol"></div> <span id="modalCollectBtnText">Start Recording</span> </button> </div> <div class="storage-path-box"> <span class="path-title">Internal Edge File Pattern:</span> <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code> </div> </div> </div> <!-- TAB 2: FLEET AVAILABILITY --> <div class="modal-tab-pane" id="tabPaneFleet"> <div class="fleet-header-summary"> <div class="fleet-stats"> <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span> <span class="stat-pill online-pill"><strong id="summaryOnlineEdges">0</strong> Available Online</span> </div> <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path> </svg> <span>Ping / Refresh</span> </button> </div> <div class="fleet-cards-list" id="fleetCardsContainer"> <!-- Dynamically populated --> </div> </div> <!-- TAB 2: ADD NEW DEVICE --> <div class="modal-tab-pane" id="tabPaneAdd"> <div class="phone-connect-box"> <h4>➕ Register New Edge Device</h4> <p>Connect another Raspberry Pi Zero, 4/5, or Linux camera rig to the centralized aggregator:</p> </div> <form id="addEdgeForm" class="add-edge-form"> <div class="form-row"> <div class="form-group flex-2"> <label>Device Name / Label</label> <input type="text" id="edgeNameInput" placeholder="Raspberry Pi Zero (STEVAL-55G0MBI)" required> </div> <div class="form-group flex-1"> <label>Device ID</label> <input type="text" id="edgeIdInput" placeholder="edge-pi-zero-02" required> </div> </div> <div class="form-row"> <div class="form-group flex-2"> <label>IP Address / Hostname / Tailscale</label> <input type="text" id="edgeHostInput" placeholder="192.168.137.240" required> </div> <div class="form-group flex-1"> <label>Port</label> <input type="number" id="edgePortInput" value="5001" required> </div> </div> <button type="submit" class="submit-btn">+ Add Edge Device</button> </form> </div> <!-- TAB 3: HUB & TUNNEL CONFIG --> <div class="modal-tab-pane" id="tabPaneConfig"> <div class="phone-connect-box"> <h4>🌐 Edge Hub & Cloudflare Tunnel Endpoint</h4> <p>Specify the proxy hub or Cloudflare Tunnel that bridges browser visitors to your edge fleet:</p> <div style="display:flex; gap:8px; margin-bottom:8px;"> <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="https://marvel-reconstruction-atm-planning.trycloudflare.com"> <button type="button" class="copy-btn" id="saveHubUrlBtn">Save</button> </div> <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;"> <button type="button" class="pill active" id="btnPresetDefault" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;">☁️ Reset to Server Default (config.json)</button> <button type="button" class="pill" id="btnPresetLocal" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://127.0.0.1:8000')">💻 Local PC Hub (8000)</button> <button type="button" class="pill" id="btnPresetDirectPi" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://192.168.137.240:5001')">🍓 Direct Pi (5001)</button> </div> <small style="color:var(--text-muted); font-size:0.75rem;">Visitors to <code>capture.me.uk</code> automatically load the default endpoint from <code>/config.json</code>.</small> </div> </div> </div> </div> </div> <!-- Client-Side Dashboard Script --> <script>
+<!DOCTYPE html><html lang="en"> <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"><title>CAPTURE.ME.UK v1.4 | Multi-Sensor Edge Collector</title><meta name="description" content="Cloudflare-hosted mobile dashboard to monitor live streams and synchronize recording across multi-sensor edge devices."><meta name="theme-color" content="#00e5ff"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="manifest" href="/manifest.webmanifest"><!-- Fonts --><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="/_astro/index.DWVhLKTK.css"></head> <body> <div class="app-container"> <!-- Slim Modern Top Bar --> <header class="top-nav-slim"> <div class="nav-left"> <div class="brand-badge"> <div class="pulse-dot"></div> <span class="brand-title">CAPTURE <small style="font-size:0.65rem;color:var(--accent-cyan);vertical-align:middle;font-weight:600;opacity:0.85;margin-left:2px;">v1.4</small></span> </div> <div class="nav-segmented"> <button id="viewByModalityBtn" class="nav-seg-btn active" type="button" title="Group by Sensors">Sensors</button> <button id="viewByDeviceBtn" class="nav-seg-btn" type="button" title="Group by Device">Devices</button> <button id="viewPlaybackBtn" class="nav-seg-btn" type="button" title="View Recorded Frames & Scrubber">🎞️ Playback</button> </div> <div class="filter-pills" id="modalityPillsBar"> <button class="pill active" data-mod="all" type="button">All</button> <button class="pill" data-mod="rgb" type="button">RGB</button> <button class="pill" data-mod="thermal" type="button">Thermal</button> <button class="pill" data-mod="depth" type="button">Depth</button> </div> </div> <div class="nav-right"> <!-- Live Video Toggle Pill --> <button id="quickDisplayBtn" class="nav-pill-btn active" type="button" title="Toggle Live Feeds"> <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path> <circle cx="12" cy="12" r="3"></circle> </svg> <span id="quickDisplayLabel">LIVE</span> </button> <!-- Recording Pill --> <button id="quickRecordBtn" class="nav-pill-btn record-pill" type="button" title="Toggle Synchronized Edge Recording"> <div class="record-dot"></div> <span id="quickRecordLabel">REC</span> </button> <!-- System & Tunnel Menu Button --> <button id="openMenuBtn" class="menu-btn" type="button" title="Open Settings & System Menu"> <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <line x1="3" y1="12" x2="21" y2="12"></line> <line x1="3" y1="6" x2="21" y2="6"></line> <line x1="3" y1="18" x2="21" y2="18"></line> </svg> <span class="menu-btn-label">Menu</span> <span class="menu-badge" id="menuEdgeBadge">0</span> </button> </div> </header> <!-- Main Dynamic Feed Container (Centered 3/2 Columns) --> <main class="feeds-viewport" id="feedsViewport"> <div class="loading-state"> <div class="spinner"></div> <p>Connecting to Edge Devices via capture.me.uk...</p> </div> </main> <!-- Playback & Historical Frame Scrubbing Studio --> <section class="playback-viewport" id="playbackViewport" style="display: none;"> <div class="playback-header-bar"> <div class="playback-header-left"> <span style="font-size:0.82rem; font-weight:700; color:var(--text-main); display:inline-flex; align-items:center; gap:6px;"> <span>🎞️</span> <span>Session:</span> </span> <select id="playbackSessionSelect" class="playback-select" title="Select recorded session"> <option value="">Loading sessions...</option> </select> <button id="refreshSessionsBtn" class="nav-seg-btn" type="button" style="padding: 4px 10px; font-size: 0.74rem;" title="Refresh Sessions">🔄 Refresh</button> </div> <div class="playback-header-right"> <span class="playback-badge-chip" id="playbackSessionMetaBadge">-- frames &bull; --s</span> <select id="playbackDeviceFilter" class="playback-select" title="Filter device / modality view"> <option value="all">Synchronized Fleet Grid (All Devices)</option> </select> </div> </div> <!-- Playback Grid of Cards --> <div class="playback-grid" id="playbackGrid"> <div class="empty-state" style="grid-column: 1 / -1; padding: 36px 16px;"> <p>Select a session to scrub and preview recorded frames.</p> </div> </div> <!-- Bottom Interactive Timeline Scrubber Dock --> <div class="playback-scrubber-dock" id="playbackScrubberDock"> <div class="playback-slider-row"> <div class="playback-slider-wrapper"> <div class="playback-buffer-bar" id="playbackBufferBar" style="width: 0%;"></div> <input type="range" id="playbackSlider" class="timeline-slider" min="1" max="1" value="1" title="Drag to scrub through recorded frames"> </div> </div> <div class="playback-controls-row"> <div class="transport-btn-group"> <button type="button" class="transport-btn" id="btnPlayFirst" title="First Frame (Home)">⏮</button> <button type="button" class="transport-btn" id="btnPlayPrev" title="Previous Frame (Left Arrow)">◀</button> <button type="button" class="transport-btn play-btn" id="btnPlayToggle" title="Play / Pause (Spacebar)">▶</button> <button type="button" class="transport-btn" id="btnPlayNext" title="Next Frame (Right Arrow)">▶</button> <button type="button" class="transport-btn" id="btnPlayLast" title="Last Frame (End)">⏭</button> </div> <div class="playback-hud-text"> <span>FRAME <strong class="playback-hud-frame" id="playbackHudFrame">1 / 1</strong></span> <span style="color:var(--text-dim);">|</span> <span id="playbackHudTime">+00:00.0s / 00:00.0s</span> </div> <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;"> <span class="buffer-chip" id="playbackBufferBadge" title="Frames cached in browser memory for instant smooth playback">RAM: 0%</span> <button type="button" class="btn-secondary-action" id="btnSyncHub" title="Download all session frames to PC Hub disk for offline access">💾 Cache to PC</button> <span style="font-size:0.75rem; color:var(--text-muted); margin-left:4px;">Speed:</span> <select id="playbackSpeedSelect" class="playback-speed-select"> <option value="0.5">0.5x</option> <option value="1" selected>1.0x (10fps)</option> <option value="2">2.0x (20fps)</option> </select> </div> </div> </div> </section> </div> <!-- Fleet Management & Hub Settings Modal --> <div class="modal-backdrop" id="modalBackdrop"> <div class="modal-card wide-modal"> <div class="modal-header"> <div class="modal-header-tabs"> <button type="button" class="modal-tab-btn active" id="tabOverviewBtn" data-tab="overview"> <span>🌐</span> <span>Overview & Tunnel</span> </button> <button type="button" class="modal-tab-btn" id="tabFleetBtn" data-tab="fleet"> <span>💻</span> <span>Fleet (<span id="modalFleetBadge">0/0</span>)</span> </button> <button type="button" class="modal-tab-btn" id="tabAddBtn" data-tab="add"> <span>➕</span> <span>Add Device</span> </button> <button type="button" class="modal-tab-btn" id="tabConfigBtn" data-tab="config"> <span>⚙️</span> <span>Hub Settings</span> </button> </div> <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button> </div> <div class="modal-body"> <!-- TAB 1: OVERVIEW & TUNNEL --> <div class="modal-tab-pane active" id="tabPaneOverview"> <!-- Cloudflare Tunnel Info Box --> <div class="tunnel-highlight-card"> <div class="tunnel-card-header"> <div class="tunnel-status-pill"> <span class="pulse-dot-green"></span> <span>CLOUDFLARE TUNNEL</span> </div> <span class="tunnel-badge-active">ONLINE</span> </div> <div class="tunnel-url-row"> <div class="tunnel-url-display" id="modalTunnelUrl">https://marvel-reconstruction-atm-planning.trycloudflare.com</div> <button type="button" class="copy-btn-tunnel" id="copyTunnelBtn" title="Copy Tunnel URL"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect> <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path> </svg> <span id="copyBtnText">Copy</span> </button> <a href="https://marvel-reconstruction-atm-planning.trycloudflare.com" target="_blank" rel="noopener" class="open-link-btn" id="openTunnelLink" title="Open in new window"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path> <polyline points="15 3 21 3 21 9"></polyline> <line x1="10" y1="14" x2="21" y2="3"></line> </svg> </a> </div> <div class="tunnel-meta-row"> <span><strong>Local LAN Hub:</strong> <code id="localIpLabel">http://192.168.137.1:8000</code></span> <span><strong>Custom Domain:</strong> <code>capture.me.uk</code></span> </div> </div> <!-- System Stats Grid --> <div class="menu-stats-grid"> <div class="menu-stat-card"> <span class="stat-num text-accent" id="menuSensorsCount">0</span> <span class="stat-sub">Active Sensors</span> </div> <div class="menu-stat-card"> <span class="stat-num text-green" id="menuOnlineEdges">0/0</span> <span class="stat-sub">Edges Online</span> </div> <div class="menu-stat-card"> <span class="stat-num" id="menuFreeStorage">--</span> <span class="stat-sub">SD Card Free</span> </div> <div class="menu-stat-card"> <span class="stat-num" id="menuRecDuration">00:00:00</span> <span class="stat-sub" id="menuRecStatusLabel">Standby</span> </div> </div> <!-- Synchronized Recording Controls --> <div class="menu-rec-section"> <div class="rec-section-header"> <h4>🔴 Edge Synchronized Recording</h4> <span class="badge-tag" id="menuRecBadge">IDLE</span> </div> <p class="rec-section-desc">Starts synchronized local MJPEG / raw frame recording simultaneously across all connected edge nodes to internal SD card storage.</p> <div class="rec-controls-bar"> <input type="text" id="recSessionLabelInput" placeholder="Session label" value="capture.me.uk Session" class="rec-label-input"> <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn"> <div class="record-symbol"></div> <span id="modalCollectBtnText">Start Recording</span> </button> </div> <div class="storage-path-box"> <span class="path-title">Internal Edge File Pattern:</span> <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code> </div> </div> </div> <!-- TAB 2: FLEET AVAILABILITY --> <div class="modal-tab-pane" id="tabPaneFleet"> <div class="fleet-header-summary"> <div class="fleet-stats"> <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span> <span class="stat-pill online-pill"><strong id="summaryOnlineEdges">0</strong> Available Online</span> </div> <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path> </svg> <span>Ping / Refresh</span> </button> </div> <div class="fleet-cards-list" id="fleetCardsContainer"> <!-- Dynamically populated --> </div> </div> <!-- TAB 2: ADD NEW DEVICE --> <div class="modal-tab-pane" id="tabPaneAdd"> <div class="phone-connect-box"> <h4>➕ Register New Edge Device</h4> <p>Connect another Raspberry Pi Zero, 4/5, or Linux camera rig to the centralized aggregator:</p> </div> <form id="addEdgeForm" class="add-edge-form"> <div class="form-row"> <div class="form-group flex-2"> <label>Device Name / Label</label> <input type="text" id="edgeNameInput" placeholder="Raspberry Pi Zero (STEVAL-55G0MBI)" required> </div> <div class="form-group flex-1"> <label>Device ID</label> <input type="text" id="edgeIdInput" placeholder="edge-pi-zero-02" required> </div> </div> <div class="form-row"> <div class="form-group flex-2"> <label>IP Address / Hostname / Tailscale</label> <input type="text" id="edgeHostInput" placeholder="192.168.137.240" required> </div> <div class="form-group flex-1"> <label>Port</label> <input type="number" id="edgePortInput" value="5001" required> </div> </div> <button type="submit" class="submit-btn">+ Add Edge Device</button> </form> </div> <!-- TAB 3: HUB & TUNNEL CONFIG --> <div class="modal-tab-pane" id="tabPaneConfig"> <div class="phone-connect-box"> <h4>🌐 Edge Hub & Cloudflare Tunnel Endpoint</h4> <p>Specify the proxy hub or Cloudflare Tunnel that bridges browser visitors to your edge fleet:</p> <div style="display:flex; gap:8px; margin-bottom:8px;"> <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="https://marvel-reconstruction-atm-planning.trycloudflare.com"> <button type="button" class="copy-btn" id="saveHubUrlBtn">Save</button> </div> <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;"> <button type="button" class="pill active" id="btnPresetDefault" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;">☁️ Reset to Server Default (config.json)</button> <button type="button" class="pill" id="btnPresetLocal" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://127.0.0.1:8000')">💻 Local PC Hub (8000)</button> <button type="button" class="pill" id="btnPresetDirectPi" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://192.168.137.240:5001')">🍓 Direct Pi (5001)</button> </div> <small style="color:var(--text-muted); font-size:0.75rem;">Visitors to <code>capture.me.uk</code> automatically load the default endpoint from <code>/config.json</code>.</small> </div> </div> </div> </div> </div> <!-- Client-Side Dashboard Script --> <script>
     (function () {
       'use strict';
 
@@ -81,6 +81,9 @@
         playbackHudFrame: document.getElementById('playbackHudFrame'),
         playbackHudTime: document.getElementById('playbackHudTime'),
         playbackSpeedSelect: document.getElementById('playbackSpeedSelect'),
+        playbackBufferBar: document.getElementById('playbackBufferBar'),
+        playbackBufferBadge: document.getElementById('playbackBufferBadge'),
+        btnSyncHub: document.getElementById('btnSyncHub'),
 
         modalBackdrop: document.getElementById('modalBackdrop'),
         closeModalBtn: document.getElementById('closeModalBtn'),
@@ -307,8 +310,15 @@
         if (el.playbackSlider) {
           el.playbackSlider.addEventListener('input', (e) => {
             const idx = parseInt(e.target.value, 10) || 1;
-            setPlaybackFrame(idx);
+            if (scrubRafId) cancelAnimationFrame(scrubRafId);
+            scrubRafId = requestAnimationFrame(() => {
+              setPlaybackFrame(idx);
+            });
           });
+        }
+
+        if (el.btnSyncHub) {
+          el.btnSyncHub.addEventListener('click', triggerSyncHub);
         }
 
         if (el.btnPlayFirst) el.btnPlayFirst.addEventListener('click', () => setPlaybackFrame(1));
@@ -559,9 +569,177 @@
         }
       }
 
+      // ==============================================================================
+      // Playback Studio & Frame Scrubbing Engine (In-Memory Buffer + Frame-Paced Playback)
+      // ==============================================================================
+
+      const frameCache = new Map(); // key: `${deviceId}:${modality}:${devIdx}` -> blob URL
+      let prebufferAbort = false;
+      let prebufferRunning = false;
+      let playbackAnimFrameId = null;
+      let lastFrameTime = 0;
+      let scrubRafId = null;
+      let syncPollingInterval = null;
+
+      async function getOrFetchFrame(devId, date, time, mod, devIdx) {
+        const key = `${devId}:${mod}:${devIdx}`;
+        if (frameCache.has(key)) {
+          return frameCache.get(key);
+        }
+        const url = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            frameCache.set(key, blobUrl);
+            updateBufferStats();
+            return blobUrl;
+          }
+        } catch (e) {
+          // fetch error fallback
+        }
+        return url;
+      }
+
+      function updateBufferStats() {
+        if (!state.currentSession) return;
+        const session = state.currentSession;
+        let totalNeeded = 0;
+        let totalCached = 0;
+
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            const fcount = mod.frames_count || state.maxFrames;
+            totalNeeded += fcount;
+            for (let i = 1; i <= fcount; i++) {
+              if (frameCache.has(`${dev.device_id}:${mod.id}:${i}`)) {
+                totalCached++;
+              }
+            }
+          });
+        });
+
+        const pct = totalNeeded > 0 ? Math.min(100, Math.round((totalCached / totalNeeded) * 100)) : 0;
+        if (el.playbackBufferBar) {
+          el.playbackBufferBar.style.width = `${pct}%`;
+        }
+        if (el.playbackBufferBadge) {
+          if (pct >= 100) {
+            el.playbackBufferBadge.textContent = `RAM: 100% (${totalCached}f Ready)`;
+            el.playbackBufferBadge.classList.add('cached');
+          } else {
+            el.playbackBufferBadge.textContent = `RAM: ${pct}% (${totalCached}/${totalNeeded})`;
+            el.playbackBufferBadge.classList.remove('cached');
+          }
+        }
+      }
+
+      async function startPrebuffering() {
+        if (!state.currentSession) return;
+        prebufferAbort = false;
+        if (prebufferRunning) return;
+        prebufferRunning = true;
+
+        const session = state.currentSession;
+        const streams = [];
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            streams.push({ dev, mod });
+          });
+        });
+
+        const maxFrames = state.maxFrames;
+        const frameIndices = [];
+        for (let i = state.currentFrameIdx; i <= maxFrames; i++) frameIndices.push(i);
+        for (let i = 1; i < state.currentFrameIdx; i++) frameIndices.push(i);
+
+        let queueIdx = 0;
+        const concurrency = 4;
+
+        async function prebufferWorker() {
+          while (queueIdx < frameIndices.length && !prebufferAbort) {
+            const fNum = frameIndices[queueIdx++];
+            for (const { dev, mod } of streams) {
+              if (prebufferAbort) break;
+              const cardMax = mod.frames_count || maxFrames;
+              const devIdx = Math.max(1, Math.min(fNum, cardMax));
+              const key = `${dev.device_id}:${mod.id}:${devIdx}`;
+              if (!frameCache.has(key)) {
+                await getOrFetchFrame(dev.device_id, dev.date, dev.time, mod.id, devIdx);
+              }
+            }
+          }
+        }
+
+        const workers = Array.from({ length: concurrency }, () => prebufferWorker());
+        await Promise.all(workers);
+        prebufferRunning = false;
+        updateBufferStats();
+      }
+
+      async function triggerSyncHub() {
+        if (!state.currentSession) return;
+        const sessionId = state.currentSession.id;
+        if (!el.btnSyncHub) return;
+
+        el.btnSyncHub.textContent = '⏳ Starting Cache...';
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/recordings/${sessionId}/cache-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          if (res.ok) {
+            if (syncPollingInterval) clearInterval(syncPollingInterval);
+            syncPollingInterval = setInterval(async () => {
+              try {
+                const sres = await fetch(`${hubBaseUrl}/api/recordings/${sessionId}/cache-status`);
+                if (sres.ok) {
+                  const sdata = await sres.json();
+                  if (sdata.done) {
+                    clearInterval(syncPollingInterval);
+                    syncPollingInterval = null;
+                    el.btnSyncHub.textContent = '✅ Cached on PC';
+                    el.btnSyncHub.style.borderColor = 'var(--accent-cyan)';
+                    startPrebuffering();
+                  } else if (sdata.in_progress) {
+                    el.btnSyncHub.textContent = `💾 PC: ${sdata.percent}% (${sdata.cached}/${sdata.total})`;
+                  }
+                }
+              } catch (e) {}
+            }, 750);
+          }
+        } catch (err) {
+          el.btnSyncHub.textContent = '❌ Sync Failed';
+          setTimeout(() => { if (el.btnSyncHub) el.btnSyncHub.textContent = '💾 Cache to PC'; }, 2000);
+        }
+      }
+
+      async function checkHubCacheStatus(sessionId) {
+        if (!el.btnSyncHub) return;
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/recordings/${sessionId}/cache-status`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.done || data.percent >= 100) {
+              el.btnSyncHub.textContent = '✅ Cached on PC';
+              el.btnSyncHub.style.borderColor = 'var(--accent-cyan)';
+            } else {
+              el.btnSyncHub.textContent = '💾 Cache to PC';
+              el.btnSyncHub.style.borderColor = '';
+            }
+          }
+        } catch (e) {}
+      }
+
       function selectPlaybackSession(sessionId) {
         const session = state.playbackSessions.find(s => s.id === sessionId);
         if (!session) return;
+
+        prebufferAbort = true;
+        frameCache.clear();
+        updateBufferStats();
 
         state.currentSession = session;
         state.maxFrames = Math.max(1, session.max_frames || 1);
@@ -599,6 +777,8 @@
         stopPlayback();
         renderPlaybackGrid();
         updatePlaybackHUD();
+        checkHubCacheStatus(sessionId);
+        startPrebuffering();
       }
 
       function renderPlaybackGrid() {
@@ -631,7 +811,8 @@
           const modType = (mod.modality || 'rgb').toLowerCase();
           const maxCount = mod.frames_count || state.maxFrames;
           const initialFrame = Math.max(1, Math.min(state.currentFrameIdx, maxCount));
-          const initialUrl = `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
+          const key = `${dev.device_id}:${mod.id}:${initialFrame}`;
+          const initialUrl = frameCache.get(key) || `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
 
           html += `
             <div class="playback-card"
@@ -680,10 +861,17 @@
           const mod = card.dataset.modality;
           const cardMax = parseInt(card.dataset.maxFrames, 10) || state.maxFrames;
           const devIdx = Math.max(1, Math.min(idx, cardMax));
+          const key = `${devId}:${mod}:${devIdx}`;
 
           const img = card.querySelector('.playback-frame-img');
           if (img) {
-            img.src = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+            if (frameCache.has(key)) {
+              img.src = frameCache.get(key);
+            } else {
+              const directUrl = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+              img.src = directUrl;
+              getOrFetchFrame(devId, date, time, mod, devIdx);
+            }
           }
 
           const badge = card.querySelector('.card-frame-badge');
@@ -722,24 +910,36 @@
         }
       }
 
+      function playbackLoop(timestamp) {
+        if (!state.isPlaying) return;
+
+        const baseFps = 10;
+        const targetFps = baseFps * state.playbackSpeed;
+        const frameIntervalMs = 1000 / targetFps;
+
+        if (!lastFrameTime) lastFrameTime = timestamp;
+        const elapsed = timestamp - lastFrameTime;
+
+        if (elapsed >= frameIntervalMs) {
+          lastFrameTime = timestamp - (elapsed % frameIntervalMs);
+          const nextIdx = (state.currentFrameIdx >= state.maxFrames) ? 1 : state.currentFrameIdx + 1;
+          setPlaybackFrame(nextIdx);
+        }
+
+        if (state.isPlaying) {
+          playbackAnimFrameId = requestAnimationFrame(playbackLoop);
+        }
+      }
+
       function startPlayback() {
-        if (state.playbackTimer) clearInterval(state.playbackTimer);
+        stopPlayback();
         state.isPlaying = true;
         if (el.btnPlayToggle) {
           el.btnPlayToggle.textContent = '⏸';
           el.btnPlayToggle.classList.add('playing');
         }
-
-        const baseFps = 10;
-        const intervalMs = Math.max(20, Math.round(1000 / (baseFps * state.playbackSpeed)));
-
-        state.playbackTimer = setInterval(() => {
-          if (state.currentFrameIdx >= state.maxFrames) {
-            setPlaybackFrame(1);
-          } else {
-            setPlaybackFrame(state.currentFrameIdx + 1);
-          }
-        }, intervalMs);
+        lastFrameTime = 0;
+        playbackAnimFrameId = requestAnimationFrame(playbackLoop);
       }
 
       function stopPlayback() {
@@ -748,9 +948,9 @@
           el.btnPlayToggle.textContent = '▶';
           el.btnPlayToggle.classList.remove('playing');
         }
-        if (state.playbackTimer) {
-          clearInterval(state.playbackTimer);
-          state.playbackTimer = null;
+        if (playbackAnimFrameId) {
+          cancelAnimationFrame(playbackAnimFrameId);
+          playbackAnimFrameId = null;
         }
       }
 

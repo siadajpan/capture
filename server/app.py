@@ -31,6 +31,8 @@ logger = logging.getLogger("hub_server")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 REGISTRY_FILE = os.path.join(BASE_DIR, "edges_registry.json")
+CACHE_DIR = os.path.join(BASE_DIR, "cache", "recordings")
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 app = FastAPI(title="Edge Multi-Sensor Collector Hub", version="1.0.0")
 
@@ -546,12 +548,121 @@ async def get_device_session_frames(device_id: str, date: str, time_str: str, mo
             raise HTTPException(status_code=502, detail=f"Failed to reach edge device: {e}")
 
 
+sync_status: Dict[str, Any] = {}
+
+async def _cache_session_worker(session_id: str):
+    """Background worker to download and cache all frames of a session to the Hub PC disk."""
+    try:
+        sessions_res = await list_aggregated_sessions()
+        session = next((s for s in sessions_res.get("sessions", []) if s["id"] == session_id), None)
+        if not session:
+            sync_status[session_id] = {"in_progress": False, "error": "Session not found", "done": False}
+            return
+
+        total_frames = sum(
+            mod.get("frames_count", 0)
+            for dev in session.get("devices", [])
+            for mod in dev.get("modalities", [])
+        )
+        sync_status[session_id] = {
+            "session_id": session_id,
+            "in_progress": True,
+            "cached": 0,
+            "total": total_frames,
+            "percent": 0,
+            "done": False,
+            "error": None
+        }
+
+        cached_count = 0
+        async with aiohttp.ClientSession() as client:
+            for dev in session.get("devices", []):
+                did = dev["device_id"]
+                edge = known_edges.get(did)
+                if not edge or not edge.get("online"):
+                    continue
+                date_s = dev["date"]
+                time_s = dev["time"]
+                for mod in dev.get("modalities", []):
+                    mod_id = mod["id"]
+                    fcount = mod.get("frames_count", 0)
+                    for idx in range(1, fcount + 1):
+                        fname = f"frame_{idx:06d}.jpg"
+                        cpath = os.path.join(CACHE_DIR, did, date_s, time_s, mod_id, fname)
+                        if os.path.isfile(cpath):
+                            cached_count += 1
+                        else:
+                            furl = f"http://{edge['host']}:{edge['port']}/api/session/{date_s}/{time_s}/{mod_id}/frame/{idx}"
+                            try:
+                                async with client.get(furl, timeout=aiohttp.ClientTimeout(total=4.0)) as resp:
+                                    if resp.status == 200:
+                                        data = await resp.read()
+                                        os.makedirs(os.path.dirname(cpath), exist_ok=True)
+                                        with open(cpath, "wb") as f:
+                                            f.write(data)
+                                        cached_count += 1
+                            except Exception:
+                                pass
+
+                        sync_status[session_id]["cached"] = cached_count
+                        sync_status[session_id]["percent"] = round((cached_count / max(1, total_frames)) * 100, 1)
+
+        sync_status[session_id]["in_progress"] = False
+        sync_status[session_id]["done"] = True
+    except Exception as e:
+        logger.error(f"Error in cache worker for {session_id}: {e}")
+        sync_status[session_id] = {"in_progress": False, "error": str(e), "done": False}
+
+
+@app.post("/api/recordings/{session_id}/cache-all")
+async def trigger_cache_session(session_id: str, background_tasks: BackgroundTasks):
+    """Starts background sync to cache all frames of a session to the Hub PC disk."""
+    st = sync_status.get(session_id)
+    if st and st.get("in_progress"):
+        return st
+    background_tasks.add_task(_cache_session_worker, session_id)
+    return {"status": "started", "session_id": session_id}
+
+
+@app.get("/api/recordings/{session_id}/cache-status")
+async def get_cache_status(session_id: str):
+    """Returns the current background caching progress for a session."""
+    return sync_status.get(session_id, {
+        "session_id": session_id,
+        "in_progress": False,
+        "cached": 0,
+        "total": 0,
+        "percent": 0,
+        "done": False
+    })
+
+
 @app.get("/proxy/recording/{device_id}/{date}/{time_str}/{modality}/{frame_id}")
 async def proxy_recording_frame(device_id: str, date: str, time_str: str, modality: str, frame_id: str):
-    """Proxies a recorded JPEG frame image from an edge device with HTTP caching."""
+    """
+    Proxies a recorded JPEG frame image from an edge device with disk-backed Hub caching.
+    1. Checks if frame is cached on local SSD (0ms response, works offline).
+    2. If missing, fetches from edge device, saves to disk cache, and returns it.
+    """
+    fname = f"frame_{int(frame_id):06d}.jpg" if frame_id.isdigit() else os.path.basename(frame_id)
+    cache_path = os.path.join(CACHE_DIR, device_id, date, time_str, modality, fname)
+
+    # 1. Serve immediately from local disk cache if available (<1ms, no network hit, works offline)
+    if os.path.isfile(cache_path):
+        return FileResponse(
+            cache_path,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "public, max-age=86400",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Private-Network": "true"
+            }
+        )
+
+    # 2. Fetch from edge device and store in cache
     edge = known_edges.get(device_id)
     if not edge:
-        raise HTTPException(status_code=404, detail="Edge device not registered")
+        raise HTTPException(status_code=404, detail="Edge device not registered and frame not in disk cache")
 
     frame_url = f"http://{edge['host']}:{edge['port']}/api/session/{date}/{time_str}/{modality}/frame/{frame_id}"
     async with aiohttp.ClientSession() as session:
@@ -559,12 +670,21 @@ async def proxy_recording_frame(device_id: str, date: str, time_str: str, modali
             async with session.get(frame_url, timeout=aiohttp.ClientTimeout(total=5.0)) as resp:
                 if resp.status == 200:
                     data = await resp.read()
+                    try:
+                        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+                        with open(cache_path, "wb") as f:
+                            f.write(data)
+                    except Exception as ce:
+                        logger.warning(f"Failed to write cache file: {ce}")
+
                     response = StreamingResponse(io_bytes_gen(data), media_type="image/jpeg")
                     response.headers["Cache-Control"] = "public, max-age=86400"
                     response.headers["Access-Control-Allow-Origin"] = "*"
+                    response.headers["Access-Control-Allow-Private-Network"] = "true"
                     return response
         except Exception:
             pass
+
     raise HTTPException(status_code=502, detail="Recording frame unreachable")
 
 

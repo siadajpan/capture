@@ -114,7 +114,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       <!-- Bottom Interactive Timeline Scrubber Dock -->
       <div class="playback-scrubber-dock" id="playbackScrubberDock">
         <div class="playback-slider-row">
-          <input type="range" id="playbackSlider" class="timeline-slider" min="1" max="1" value="1" title="Drag to scrub through recorded frames">
+          <div class="playback-slider-wrapper">
+            <div class="playback-buffer-bar" id="playbackBufferBar" style="width: 0%;"></div>
+            <input type="range" id="playbackSlider" class="timeline-slider" min="1" max="1" value="1" title="Drag to scrub through recorded frames">
+          </div>
         </div>
 
         <div class="playback-controls-row">
@@ -132,8 +135,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             <span id="playbackHudTime">+00:00.0s / 00:00.0s</span>
           </div>
 
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-size:0.75rem; color:var(--text-muted);">Speed:</span>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span class="buffer-chip" id="playbackBufferBadge" title="Frames cached in browser memory for instant smooth playback">RAM: 0%</span>
+            <button type="button" class="btn-secondary-action" id="btnSyncHub" title="Download all session frames to PC Hub disk for offline access">💾 Cache to PC</button>
+            <span style="font-size:0.75rem; color:var(--text-muted); margin-left:4px;">Speed:</span>
             <select id="playbackSpeedSelect" class="playback-speed-select">
               <option value="0.5">0.5x</option>
               <option value="1" selected>1.0x (10fps)</option>
@@ -404,6 +409,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         playbackHudFrame: document.getElementById('playbackHudFrame'),
         playbackHudTime: document.getElementById('playbackHudTime'),
         playbackSpeedSelect: document.getElementById('playbackSpeedSelect'),
+        playbackBufferBar: document.getElementById('playbackBufferBar'),
+        playbackBufferBadge: document.getElementById('playbackBufferBadge'),
+        btnSyncHub: document.getElementById('btnSyncHub'),
 
         modalBackdrop: document.getElementById('modalBackdrop'),
         closeModalBtn: document.getElementById('closeModalBtn'),
@@ -630,8 +638,15 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         if (el.playbackSlider) {
           el.playbackSlider.addEventListener('input', (e) => {
             const idx = parseInt(e.target.value, 10) || 1;
-            setPlaybackFrame(idx);
+            if (scrubRafId) cancelAnimationFrame(scrubRafId);
+            scrubRafId = requestAnimationFrame(() => {
+              setPlaybackFrame(idx);
+            });
           });
+        }
+
+        if (el.btnSyncHub) {
+          el.btnSyncHub.addEventListener('click', triggerSyncHub);
         }
 
         if (el.btnPlayFirst) el.btnPlayFirst.addEventListener('click', () => setPlaybackFrame(1));
@@ -882,9 +897,177 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }
       }
 
+      // ==============================================================================
+      // Playback Studio & Frame Scrubbing Engine (In-Memory Buffer + Frame-Paced Playback)
+      // ==============================================================================
+
+      const frameCache = new Map(); // key: `${deviceId}:${modality}:${devIdx}` -> blob URL
+      let prebufferAbort = false;
+      let prebufferRunning = false;
+      let playbackAnimFrameId = null;
+      let lastFrameTime = 0;
+      let scrubRafId = null;
+      let syncPollingInterval = null;
+
+      async function getOrFetchFrame(devId, date, time, mod, devIdx) {
+        const key = `${devId}:${mod}:${devIdx}`;
+        if (frameCache.has(key)) {
+          return frameCache.get(key);
+        }
+        const url = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+        try {
+          const res = await fetch(url);
+          if (res.ok) {
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            frameCache.set(key, blobUrl);
+            updateBufferStats();
+            return blobUrl;
+          }
+        } catch (e) {
+          // fetch error fallback
+        }
+        return url;
+      }
+
+      function updateBufferStats() {
+        if (!state.currentSession) return;
+        const session = state.currentSession;
+        let totalNeeded = 0;
+        let totalCached = 0;
+
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            const fcount = mod.frames_count || state.maxFrames;
+            totalNeeded += fcount;
+            for (let i = 1; i <= fcount; i++) {
+              if (frameCache.has(`${dev.device_id}:${mod.id}:${i}`)) {
+                totalCached++;
+              }
+            }
+          });
+        });
+
+        const pct = totalNeeded > 0 ? Math.min(100, Math.round((totalCached / totalNeeded) * 100)) : 0;
+        if (el.playbackBufferBar) {
+          el.playbackBufferBar.style.width = `${pct}%`;
+        }
+        if (el.playbackBufferBadge) {
+          if (pct >= 100) {
+            el.playbackBufferBadge.textContent = `RAM: 100% (${totalCached}f Ready)`;
+            el.playbackBufferBadge.classList.add('cached');
+          } else {
+            el.playbackBufferBadge.textContent = `RAM: ${pct}% (${totalCached}/${totalNeeded})`;
+            el.playbackBufferBadge.classList.remove('cached');
+          }
+        }
+      }
+
+      async function startPrebuffering() {
+        if (!state.currentSession) return;
+        prebufferAbort = false;
+        if (prebufferRunning) return;
+        prebufferRunning = true;
+
+        const session = state.currentSession;
+        const streams = [];
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            streams.push({ dev, mod });
+          });
+        });
+
+        const maxFrames = state.maxFrames;
+        const frameIndices = [];
+        for (let i = state.currentFrameIdx; i <= maxFrames; i++) frameIndices.push(i);
+        for (let i = 1; i < state.currentFrameIdx; i++) frameIndices.push(i);
+
+        let queueIdx = 0;
+        const concurrency = 4;
+
+        async function prebufferWorker() {
+          while (queueIdx < frameIndices.length && !prebufferAbort) {
+            const fNum = frameIndices[queueIdx++];
+            for (const { dev, mod } of streams) {
+              if (prebufferAbort) break;
+              const cardMax = mod.frames_count || maxFrames;
+              const devIdx = Math.max(1, Math.min(fNum, cardMax));
+              const key = `${dev.device_id}:${mod.id}:${devIdx}`;
+              if (!frameCache.has(key)) {
+                await getOrFetchFrame(dev.device_id, dev.date, dev.time, mod.id, devIdx);
+              }
+            }
+          }
+        }
+
+        const workers = Array.from({ length: concurrency }, () => prebufferWorker());
+        await Promise.all(workers);
+        prebufferRunning = false;
+        updateBufferStats();
+      }
+
+      async function triggerSyncHub() {
+        if (!state.currentSession) return;
+        const sessionId = state.currentSession.id;
+        if (!el.btnSyncHub) return;
+
+        el.btnSyncHub.textContent = '⏳ Starting Cache...';
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/recordings/${sessionId}/cache-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          if (res.ok) {
+            if (syncPollingInterval) clearInterval(syncPollingInterval);
+            syncPollingInterval = setInterval(async () => {
+              try {
+                const sres = await fetch(`${hubBaseUrl}/api/recordings/${sessionId}/cache-status`);
+                if (sres.ok) {
+                  const sdata = await sres.json();
+                  if (sdata.done) {
+                    clearInterval(syncPollingInterval);
+                    syncPollingInterval = null;
+                    el.btnSyncHub.textContent = '✅ Cached on PC';
+                    el.btnSyncHub.style.borderColor = 'var(--accent-cyan)';
+                    startPrebuffering();
+                  } else if (sdata.in_progress) {
+                    el.btnSyncHub.textContent = `💾 PC: ${sdata.percent}% (${sdata.cached}/${sdata.total})`;
+                  }
+                }
+              } catch (e) {}
+            }, 750);
+          }
+        } catch (err) {
+          el.btnSyncHub.textContent = '❌ Sync Failed';
+          setTimeout(() => { if (el.btnSyncHub) el.btnSyncHub.textContent = '💾 Cache to PC'; }, 2000);
+        }
+      }
+
+      async function checkHubCacheStatus(sessionId) {
+        if (!el.btnSyncHub) return;
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/recordings/${sessionId}/cache-status`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.done || data.percent >= 100) {
+              el.btnSyncHub.textContent = '✅ Cached on PC';
+              el.btnSyncHub.style.borderColor = 'var(--accent-cyan)';
+            } else {
+              el.btnSyncHub.textContent = '💾 Cache to PC';
+              el.btnSyncHub.style.borderColor = '';
+            }
+          }
+        } catch (e) {}
+      }
+
       function selectPlaybackSession(sessionId) {
         const session = state.playbackSessions.find(s => s.id === sessionId);
         if (!session) return;
+
+        prebufferAbort = true;
+        frameCache.clear();
+        updateBufferStats();
 
         state.currentSession = session;
         state.maxFrames = Math.max(1, session.max_frames || 1);
@@ -922,6 +1105,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         stopPlayback();
         renderPlaybackGrid();
         updatePlaybackHUD();
+        checkHubCacheStatus(sessionId);
+        startPrebuffering();
       }
 
       function renderPlaybackGrid() {
@@ -954,7 +1139,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           const modType = (mod.modality || 'rgb').toLowerCase();
           const maxCount = mod.frames_count || state.maxFrames;
           const initialFrame = Math.max(1, Math.min(state.currentFrameIdx, maxCount));
-          const initialUrl = `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
+          const key = `${dev.device_id}:${mod.id}:${initialFrame}`;
+          const initialUrl = frameCache.get(key) || `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
 
           html += `
             <div class="playback-card"
@@ -1003,10 +1189,17 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           const mod = card.dataset.modality;
           const cardMax = parseInt(card.dataset.maxFrames, 10) || state.maxFrames;
           const devIdx = Math.max(1, Math.min(idx, cardMax));
+          const key = `${devId}:${mod}:${devIdx}`;
 
           const img = card.querySelector('.playback-frame-img');
           if (img) {
-            img.src = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+            if (frameCache.has(key)) {
+              img.src = frameCache.get(key);
+            } else {
+              const directUrl = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+              img.src = directUrl;
+              getOrFetchFrame(devId, date, time, mod, devIdx);
+            }
           }
 
           const badge = card.querySelector('.card-frame-badge');
@@ -1045,24 +1238,36 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }
       }
 
+      function playbackLoop(timestamp) {
+        if (!state.isPlaying) return;
+
+        const baseFps = 10;
+        const targetFps = baseFps * state.playbackSpeed;
+        const frameIntervalMs = 1000 / targetFps;
+
+        if (!lastFrameTime) lastFrameTime = timestamp;
+        const elapsed = timestamp - lastFrameTime;
+
+        if (elapsed >= frameIntervalMs) {
+          lastFrameTime = timestamp - (elapsed % frameIntervalMs);
+          const nextIdx = (state.currentFrameIdx >= state.maxFrames) ? 1 : state.currentFrameIdx + 1;
+          setPlaybackFrame(nextIdx);
+        }
+
+        if (state.isPlaying) {
+          playbackAnimFrameId = requestAnimationFrame(playbackLoop);
+        }
+      }
+
       function startPlayback() {
-        if (state.playbackTimer) clearInterval(state.playbackTimer);
+        stopPlayback();
         state.isPlaying = true;
         if (el.btnPlayToggle) {
           el.btnPlayToggle.textContent = '⏸';
           el.btnPlayToggle.classList.add('playing');
         }
-
-        const baseFps = 10;
-        const intervalMs = Math.max(20, Math.round(1000 / (baseFps * state.playbackSpeed)));
-
-        state.playbackTimer = setInterval(() => {
-          if (state.currentFrameIdx >= state.maxFrames) {
-            setPlaybackFrame(1);
-          } else {
-            setPlaybackFrame(state.currentFrameIdx + 1);
-          }
-        }, intervalMs);
+        lastFrameTime = 0;
+        playbackAnimFrameId = requestAnimationFrame(playbackLoop);
       }
 
       function stopPlayback() {
@@ -1071,9 +1276,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           el.btnPlayToggle.textContent = '▶';
           el.btnPlayToggle.classList.remove('playing');
         }
-        if (state.playbackTimer) {
-          clearInterval(state.playbackTimer);
-          state.playbackTimer = null;
+        if (playbackAnimFrameId) {
+          cancelAnimationFrame(playbackAnimFrameId);
+          playbackAnimFrameId = null;
         }
       }
 
