@@ -34,6 +34,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         <div class="nav-segmented">
           <button id="viewByModalityBtn" class="nav-seg-btn active" type="button" title="Group by Sensors">Sensors</button>
           <button id="viewByDeviceBtn" class="nav-seg-btn" type="button" title="Group by Device">Devices</button>
+          <button id="viewPlaybackBtn" class="nav-seg-btn" type="button" title="View Recorded Frames & Scrubber">🎞️ Playback</button>
         </div>
 
         <div class="filter-pills" id="modalityPillsBar">
@@ -80,6 +81,68 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         <p>Connecting to Edge Devices via capture.me.uk...</p>
       </div>
     </main>
+
+    <!-- Playback & Historical Frame Scrubbing Studio -->
+    <section class="playback-viewport" id="playbackViewport" style="display: none;">
+      <div class="playback-header-bar">
+        <div class="playback-header-left">
+          <span style="font-size:0.82rem; font-weight:700; color:var(--text-main); display:inline-flex; align-items:center; gap:6px;">
+            <span>🎞️</span>
+            <span>Session:</span>
+          </span>
+          <select id="playbackSessionSelect" class="playback-select" title="Select recorded session">
+            <option value="">Loading sessions...</option>
+          </select>
+          <button id="refreshSessionsBtn" class="nav-seg-btn" type="button" style="padding: 4px 10px; font-size: 0.74rem;" title="Refresh Sessions">🔄 Refresh</button>
+        </div>
+
+        <div class="playback-header-right">
+          <span class="playback-badge-chip" id="playbackSessionMetaBadge">-- frames &bull; --s</span>
+          <select id="playbackDeviceFilter" class="playback-select" title="Filter device / modality view">
+            <option value="all">Synchronized Fleet Grid (All Devices)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Playback Grid of Cards -->
+      <div class="playback-grid" id="playbackGrid">
+        <div class="empty-state" style="grid-column: 1 / -1; padding: 36px 16px;">
+          <p>Select a session to scrub and preview recorded frames.</p>
+        </div>
+      </div>
+
+      <!-- Bottom Interactive Timeline Scrubber Dock -->
+      <div class="playback-scrubber-dock" id="playbackScrubberDock">
+        <div class="playback-slider-row">
+          <input type="range" id="playbackSlider" class="timeline-slider" min="1" max="1" value="1" title="Drag to scrub through recorded frames">
+        </div>
+
+        <div class="playback-controls-row">
+          <div class="transport-btn-group">
+            <button type="button" class="transport-btn" id="btnPlayFirst" title="First Frame (Home)">⏮</button>
+            <button type="button" class="transport-btn" id="btnPlayPrev" title="Previous Frame (Left Arrow)">◀</button>
+            <button type="button" class="transport-btn play-btn" id="btnPlayToggle" title="Play / Pause (Spacebar)">▶</button>
+            <button type="button" class="transport-btn" id="btnPlayNext" title="Next Frame (Right Arrow)">▶</button>
+            <button type="button" class="transport-btn" id="btnPlayLast" title="Last Frame (End)">⏭</button>
+          </div>
+
+          <div class="playback-hud-text">
+            <span>FRAME <strong class="playback-hud-frame" id="playbackHudFrame">1 / 1</strong></span>
+            <span style="color:var(--text-dim);">|</span>
+            <span id="playbackHudTime">+00:00.0s / 00:00.0s</span>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:0.75rem; color:var(--text-muted);">Speed:</span>
+            <select id="playbackSpeedSelect" class="playback-speed-select">
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1.0x (10fps)</option>
+              <option value="2">2.0x (20fps)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- Fleet Management & Hub Settings Modal -->
@@ -298,7 +361,17 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         displayEnabled: true,
         isRecording: false,
         edges: [],
-        pollTimer: null
+        pollTimer: null,
+
+        // Playback & Frame Scrubbing State
+        playbackSessions: [],
+        currentSession: null,
+        currentFrameIdx: 1,
+        maxFrames: 1,
+        isPlaying: false,
+        playbackTimer: null,
+        playbackSpeed: 1.0,
+        selectedPlaybackFilter: 'all'
       };
 
       const el = {
@@ -311,8 +384,26 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         viewByDeviceBtn: document.getElementById('viewByDeviceBtn'),
         viewByModalityBtn: document.getElementById('viewByModalityBtn'),
+        viewPlaybackBtn: document.getElementById('viewPlaybackBtn'),
         modalityPillsBar: document.getElementById('modalityPillsBar'),
         feedsViewport: document.getElementById('feedsViewport'),
+
+        // Playback UI Elements
+        playbackViewport: document.getElementById('playbackViewport'),
+        playbackSessionSelect: document.getElementById('playbackSessionSelect'),
+        refreshSessionsBtn: document.getElementById('refreshSessionsBtn'),
+        playbackSessionMetaBadge: document.getElementById('playbackSessionMetaBadge'),
+        playbackDeviceFilter: document.getElementById('playbackDeviceFilter'),
+        playbackGrid: document.getElementById('playbackGrid'),
+        playbackSlider: document.getElementById('playbackSlider'),
+        btnPlayFirst: document.getElementById('btnPlayFirst'),
+        btnPlayPrev: document.getElementById('btnPlayPrev'),
+        btnPlayToggle: document.getElementById('btnPlayToggle'),
+        btnPlayNext: document.getElementById('btnPlayNext'),
+        btnPlayLast: document.getElementById('btnPlayLast'),
+        playbackHudFrame: document.getElementById('playbackHudFrame'),
+        playbackHudTime: document.getElementById('playbackHudTime'),
+        playbackSpeedSelect: document.getElementById('playbackSpeedSelect'),
 
         modalBackdrop: document.getElementById('modalBackdrop'),
         closeModalBtn: document.getElementById('closeModalBtn'),
@@ -398,6 +489,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         if (el.viewByDeviceBtn) el.viewByDeviceBtn.addEventListener('click', () => switchViewMode('device'));
         if (el.viewByModalityBtn) el.viewByModalityBtn.addEventListener('click', () => switchViewMode('modality'));
+        if (el.viewPlaybackBtn) el.viewPlaybackBtn.addEventListener('click', () => switchViewMode('playback'));
 
         if (el.modalityPillsBar) {
           el.modalityPillsBar.addEventListener('click', (e) => {
@@ -510,6 +602,76 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         };
 
         if (el.addEdgeForm) el.addEdgeForm.addEventListener('submit', handleAddEdge);
+
+        // Playback Events
+        if (el.playbackSessionSelect) {
+          el.playbackSessionSelect.addEventListener('change', (e) => {
+            selectPlaybackSession(e.target.value);
+          });
+        }
+
+        if (el.refreshSessionsBtn) {
+          el.refreshSessionsBtn.addEventListener('click', async () => {
+            el.refreshSessionsBtn.textContent = 'Refreshing...';
+            await loadPlaybackSessions(false);
+            setTimeout(() => {
+              if (el.refreshSessionsBtn) el.refreshSessionsBtn.textContent = '🔄 Refresh';
+            }, 600);
+          });
+        }
+
+        if (el.playbackDeviceFilter) {
+          el.playbackDeviceFilter.addEventListener('change', (e) => {
+            state.selectedPlaybackFilter = e.target.value;
+            renderPlaybackGrid();
+          });
+        }
+
+        if (el.playbackSlider) {
+          el.playbackSlider.addEventListener('input', (e) => {
+            const idx = parseInt(e.target.value, 10) || 1;
+            setPlaybackFrame(idx);
+          });
+        }
+
+        if (el.btnPlayFirst) el.btnPlayFirst.addEventListener('click', () => setPlaybackFrame(1));
+        if (el.btnPlayPrev) el.btnPlayPrev.addEventListener('click', () => setPlaybackFrame(state.currentFrameIdx - 1));
+        if (el.btnPlayToggle) el.btnPlayToggle.addEventListener('click', togglePlayback);
+        if (el.btnPlayNext) el.btnPlayNext.addEventListener('click', () => setPlaybackFrame(state.currentFrameIdx + 1));
+        if (el.btnPlayLast) el.btnPlayLast.addEventListener('click', () => setPlaybackFrame(state.maxFrames));
+
+        if (el.playbackSpeedSelect) {
+          el.playbackSpeedSelect.addEventListener('change', (e) => {
+            state.playbackSpeed = parseFloat(e.target.value) || 1.0;
+            if (state.isPlaying) {
+              startPlayback();
+            }
+          });
+        }
+
+        // Keyboard controls for frame-by-frame scrubbing
+        window.addEventListener('keydown', (e) => {
+          if (state.viewMode !== 'playback') return;
+          if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA')) {
+            if (e.target.id !== 'playbackSlider') return;
+          }
+          if (e.code === 'Space') {
+            e.preventDefault();
+            togglePlayback();
+          } else if (e.code === 'ArrowLeft') {
+            e.preventDefault();
+            setPlaybackFrame(state.currentFrameIdx - 1);
+          } else if (e.code === 'ArrowRight') {
+            e.preventDefault();
+            setPlaybackFrame(state.currentFrameIdx + 1);
+          } else if (e.code === 'Home') {
+            e.preventDefault();
+            setPlaybackFrame(1);
+          } else if (e.code === 'End') {
+            e.preventDefault();
+            setPlaybackFrame(state.maxFrames);
+          }
+        });
       }
 
       async function pollData() {
@@ -521,7 +683,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           state.displayEnabled = data.display_enabled;
 
           updateHUD();
-          renderFeeds();
+          if (state.viewMode !== 'playback') {
+            renderFeeds();
+          }
           renderFleetCards();
         } catch (err) {
           const defaultUrl = clientConfig?.default_hub_url || 'https://marvel-reconstruction-atm-planning.trycloudflare.com';
@@ -635,13 +799,282 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         if (mode === 'device') {
           if (el.viewByDeviceBtn) el.viewByDeviceBtn.classList.add('active');
           if (el.viewByModalityBtn) el.viewByModalityBtn.classList.remove('active');
+          if (el.viewPlaybackBtn) el.viewPlaybackBtn.classList.remove('active');
           if (el.modalityPillsBar) el.modalityPillsBar.style.display = 'none';
+          if (el.playbackViewport) el.playbackViewport.style.display = 'none';
+          if (el.feedsViewport) el.feedsViewport.style.display = '';
+          stopPlayback();
+          renderFeeds();
+        } else if (mode === 'playback') {
+          if (el.viewByDeviceBtn) el.viewByDeviceBtn.classList.remove('active');
+          if (el.viewByModalityBtn) el.viewByModalityBtn.classList.remove('active');
+          if (el.viewPlaybackBtn) el.viewPlaybackBtn.classList.add('active');
+          if (el.modalityPillsBar) el.modalityPillsBar.style.display = 'none';
+          if (el.feedsViewport) el.feedsViewport.style.display = 'none';
+          if (el.playbackViewport) el.playbackViewport.style.display = 'flex';
+          if (!state.playbackSessions || state.playbackSessions.length === 0) {
+            loadPlaybackSessions();
+          }
         } else {
+          // modality mode
           if (el.viewByDeviceBtn) el.viewByDeviceBtn.classList.remove('active');
           if (el.viewByModalityBtn) el.viewByModalityBtn.classList.add('active');
+          if (el.viewPlaybackBtn) el.viewPlaybackBtn.classList.remove('active');
           if (el.modalityPillsBar) el.modalityPillsBar.style.display = 'flex';
+          if (el.playbackViewport) el.playbackViewport.style.display = 'none';
+          if (el.feedsViewport) el.feedsViewport.style.display = '';
+          stopPlayback();
+          renderFeeds();
         }
-        renderFeeds();
+      }
+
+      // ==============================================================================
+      // Playback Studio & Frame Scrubbing Engine
+      // ==============================================================================
+
+      async function loadPlaybackSessions(autoSelectFirst = true) {
+        try {
+          const res = await fetch(`${hubBaseUrl}/api/recordings/sessions`);
+          if (!res.ok) throw new Error('Status ' + res.status);
+          const data = await res.json();
+          state.playbackSessions = data.sessions || [];
+
+          if (!el.playbackSessionSelect) return;
+
+          if (state.playbackSessions.length === 0) {
+            el.playbackSessionSelect.innerHTML = '<option value="">No recorded sessions found</option>';
+            if (el.playbackGrid) {
+              el.playbackGrid.innerHTML = `
+                <div class="empty-state" style="grid-column: 1 / -1; padding: 40px 16px;">
+                  <p>No recorded sessions found on connected edge devices.</p>
+                  <p style="font-size:0.75rem; color:var(--text-muted); margin-top:8px;">Start a recording from the REC button to create your first session.</p>
+                </div>
+              `;
+            }
+            if (el.playbackSessionMetaBadge) el.playbackSessionMetaBadge.textContent = '0 frames • 0s';
+            return;
+          }
+
+          let html = '';
+          state.playbackSessions.forEach(s => {
+            const timeFormatted = (s.time || '').replace(/-/g, ':');
+            const dur = s.duration_seconds ? `${s.duration_seconds.toFixed(1)}s` : '--';
+            const devCount = (s.devices || []).length;
+            html += `<option value="${escapeHtml(s.id)}">${escapeHtml(s.date)} ${escapeHtml(timeFormatted)} • ${escapeHtml(s.label || 'Session')} • ${s.max_frames} frames (${dur}, ${devCount} devs)</option>`;
+          });
+          el.playbackSessionSelect.innerHTML = html;
+
+          if (autoSelectFirst || !state.currentSession) {
+            selectPlaybackSession(state.playbackSessions[0].id);
+          } else {
+            const exists = state.playbackSessions.some(s => s.id === state.currentSession.id);
+            if (exists) {
+              el.playbackSessionSelect.value = state.currentSession.id;
+            } else {
+              selectPlaybackSession(state.playbackSessions[0].id);
+            }
+          }
+        } catch (err) {
+          console.error('Error loading playback sessions:', err);
+          if (el.playbackSessionSelect) {
+            el.playbackSessionSelect.innerHTML = '<option value="">Failed to fetch sessions from Hub</option>';
+          }
+        }
+      }
+
+      function selectPlaybackSession(sessionId) {
+        const session = state.playbackSessions.find(s => s.id === sessionId);
+        if (!session) return;
+
+        state.currentSession = session;
+        state.maxFrames = Math.max(1, session.max_frames || 1);
+        state.currentFrameIdx = 1;
+
+        if (el.playbackSessionSelect) el.playbackSessionSelect.value = sessionId;
+
+        // Populate device filter
+        if (el.playbackDeviceFilter) {
+          let filterHtml = '<option value="all">Synchronized Fleet Grid (All Devices & Streams)</option>';
+          (session.devices || []).forEach(dev => {
+            (dev.modalities || []).forEach(mod => {
+              const fKey = `${dev.device_id}:${mod.id}`;
+              filterHtml += `<option value="${escapeHtml(fKey)}">${escapeHtml(dev.device_name || dev.device_id)} • ${escapeHtml(mod.name || mod.id)} (${mod.frames_count || 0} frames)</option>`;
+            });
+          });
+          el.playbackDeviceFilter.innerHTML = filterHtml;
+          state.selectedPlaybackFilter = 'all';
+        }
+
+        // Update meta badge
+        if (el.playbackSessionMetaBadge) {
+          const dur = session.duration_seconds ? `${session.duration_seconds.toFixed(1)}s` : '--';
+          const devCount = (session.devices || []).length;
+          el.playbackSessionMetaBadge.textContent = `${state.maxFrames} frames • ${dur} • ${devCount} devices`;
+        }
+
+        // Setup scrubber slider
+        if (el.playbackSlider) {
+          el.playbackSlider.min = '1';
+          el.playbackSlider.max = String(state.maxFrames);
+          el.playbackSlider.value = '1';
+        }
+
+        stopPlayback();
+        renderPlaybackGrid();
+        updatePlaybackHUD();
+      }
+
+      function renderPlaybackGrid() {
+        if (!el.playbackGrid || !state.currentSession) return;
+
+        const session = state.currentSession;
+        const streams = [];
+
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            const fKey = `${dev.device_id}:${mod.id}`;
+            if (state.selectedPlaybackFilter !== 'all' && state.selectedPlaybackFilter !== fKey) {
+              return;
+            }
+            streams.push({ dev, mod });
+          });
+        });
+
+        if (streams.length === 0) {
+          el.playbackGrid.innerHTML = `
+            <div class="empty-state" style="grid-column: 1 / -1; padding: 36px 16px;">
+              <p>No streams match the selected filter.</p>
+            </div>
+          `;
+          return;
+        }
+
+        let html = '';
+        streams.forEach(({ dev, mod }) => {
+          const modType = (mod.modality || 'rgb').toLowerCase();
+          const maxCount = mod.frames_count || state.maxFrames;
+          const initialFrame = Math.max(1, Math.min(state.currentFrameIdx, maxCount));
+          const initialUrl = `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
+
+          html += `
+            <div class="playback-card"
+                 data-device-id="${escapeHtml(dev.device_id)}"
+                 data-date="${escapeHtml(dev.date)}"
+                 data-time="${escapeHtml(dev.time)}"
+                 data-modality="${escapeHtml(mod.id)}"
+                 data-max-frames="${maxCount}">
+              <div class="playback-card-header">
+                <div class="playback-card-title">
+                  <span class="status-indicator"></span>
+                  <span style="font-weight:700;">${escapeHtml(dev.device_name || dev.device_id)}</span>
+                  <span class="device-id-tag">${escapeHtml(dev.device_id)}</span>
+                </div>
+                <span class="playback-card-modality ${modType}">${escapeHtml(mod.modality || modType).toUpperCase()}</span>
+              </div>
+              
+              <div class="playback-card-body">
+                <img src="${initialUrl}" alt="${escapeHtml(mod.name || mod.id)}" class="playback-frame-img" loading="eager" />
+              </div>
+
+              <div class="playback-card-footer">
+                <span style="color:var(--text-main); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(mod.name || mod.id)}">${escapeHtml(mod.name || mod.id)}</span>
+                <span class="card-frame-badge">Frame ${initialFrame} / ${maxCount}</span>
+              </div>
+            </div>
+          `;
+        });
+
+        el.playbackGrid.innerHTML = html;
+      }
+
+      function setPlaybackFrame(idx) {
+        if (!state.currentSession) return;
+        idx = Math.max(1, Math.min(idx, state.maxFrames));
+        state.currentFrameIdx = idx;
+
+        if (el.playbackSlider) el.playbackSlider.value = String(idx);
+        updatePlaybackHUD();
+
+        const cards = document.querySelectorAll('.playback-card');
+        cards.forEach(card => {
+          const devId = card.dataset.deviceId;
+          const date = card.dataset.date;
+          const time = card.dataset.time;
+          const mod = card.dataset.modality;
+          const cardMax = parseInt(card.dataset.maxFrames, 10) || state.maxFrames;
+          const devIdx = Math.max(1, Math.min(idx, cardMax));
+
+          const img = card.querySelector('.playback-frame-img');
+          if (img) {
+            img.src = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+          }
+
+          const badge = card.querySelector('.card-frame-badge');
+          if (badge) {
+            badge.textContent = `Frame ${devIdx} / ${cardMax}`;
+          }
+        });
+      }
+
+      function updatePlaybackHUD() {
+        if (el.playbackHudFrame) {
+          el.playbackHudFrame.textContent = `${state.currentFrameIdx} / ${state.maxFrames}`;
+        }
+        if (el.playbackHudTime) {
+          const currentSec = (state.currentFrameIdx - 1) / 10.0;
+          const totalSec = state.currentSession?.duration_seconds || (state.maxFrames / 10.0);
+          el.playbackHudTime.textContent = `+${formatTimeSec(currentSec)} / ${formatTimeSec(totalSec)}`;
+        }
+      }
+
+      function formatTimeSec(seconds) {
+        const s = Math.max(0, seconds);
+        const mins = Math.floor(s / 60).toString().padStart(2, '0');
+        const secs = (s % 60).toFixed(1).padStart(4, '0');
+        return `${mins}:${secs}s`;
+      }
+
+      function togglePlayback() {
+        if (state.isPlaying) {
+          stopPlayback();
+        } else {
+          if (state.currentFrameIdx >= state.maxFrames) {
+            setPlaybackFrame(1);
+          }
+          startPlayback();
+        }
+      }
+
+      function startPlayback() {
+        if (state.playbackTimer) clearInterval(state.playbackTimer);
+        state.isPlaying = true;
+        if (el.btnPlayToggle) {
+          el.btnPlayToggle.textContent = '⏸';
+          el.btnPlayToggle.classList.add('playing');
+        }
+
+        const baseFps = 10;
+        const intervalMs = Math.max(20, Math.round(1000 / (baseFps * state.playbackSpeed)));
+
+        state.playbackTimer = setInterval(() => {
+          if (state.currentFrameIdx >= state.maxFrames) {
+            setPlaybackFrame(1);
+          } else {
+            setPlaybackFrame(state.currentFrameIdx + 1);
+          }
+        }, intervalMs);
+      }
+
+      function stopPlayback() {
+        state.isPlaying = false;
+        if (el.btnPlayToggle) {
+          el.btnPlayToggle.textContent = '▶';
+          el.btnPlayToggle.classList.remove('playing');
+        }
+        if (state.playbackTimer) {
+          clearInterval(state.playbackTimer);
+          state.playbackTimer = null;
+        }
       }
 
       function renderFeeds() {

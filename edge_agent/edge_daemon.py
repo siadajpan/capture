@@ -1049,6 +1049,8 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._send_json(res)
         elif path == "/api/sessions":
             self._handle_list_sessions()
+        elif path.startswith("/api/session/"):
+            self._handle_session_detail(path)
         else:
             self.send_error(404, "Not Found")
 
@@ -1233,6 +1235,110 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                         "manifest": meta
                     })
         self._send_json({"storage_root": storage_root, "sessions": sessions})
+
+    def _handle_session_detail(self, path):
+        """
+        Handles:
+          /api/session/{date}/{time}/{modality}/frames
+          /api/session/{date}/{time}/{modality}/frame/{frame_id_or_index}
+        """
+        parts = [p for p in path.split("/api/session/")[1].split("/") if p]
+        if len(parts) < 4:
+            self.send_error(400, "Invalid session request path format")
+            return
+
+        date_entry = parts[0]
+        time_entry = parts[1]
+        modality = parts[2]
+        action = parts[3]
+
+        storage_root = self.daemon_ref.collector.storage_root
+        session_base = os.path.join(storage_root, date_entry, time_entry)
+        target_dir = os.path.join(session_base, modality)
+
+        if not os.path.isdir(target_dir):
+            # Try sensor modality or sensor id lookup
+            sensor = self.daemon_ref.find_sensor(modality)
+            if sensor:
+                cand1 = os.path.join(session_base, sensor.modality)
+                cand2 = os.path.join(session_base, sensor.sensor_id)
+                if os.path.isdir(cand1):
+                    target_dir = cand1
+                elif os.path.isdir(cand2):
+                    target_dir = cand2
+
+        if not os.path.isdir(target_dir) and os.path.isdir(session_base):
+            # Scan actual directories under session_base for match
+            for d in os.listdir(session_base):
+                d_path = os.path.join(session_base, d)
+                if os.path.isdir(d_path):
+                    if d.lower() in modality.lower() or modality.lower() in d.lower():
+                        target_dir = d_path
+                        break
+
+        if not os.path.isdir(target_dir):
+            self.send_error(404, f"Session modality directory not found: {modality}")
+            return
+
+        files = sorted([f for f in os.listdir(target_dir) if f.lower().endswith(".jpg") or f.lower().endswith(".jpeg")])
+
+        if action == "frames":
+            manifest_path = os.path.join(storage_root, date_entry, time_entry, "session_manifest.json")
+            manifest = {}
+            if os.path.exists(manifest_path):
+                try:
+                    with open(manifest_path, "r") as mf:
+                        manifest = json.load(mf)
+                except Exception:
+                    pass
+            self._send_json({
+                "date": date_entry,
+                "time": time_entry,
+                "modality": modality,
+                "total_frames": len(files),
+                "frames": files,
+                "manifest": manifest
+            })
+
+        elif action == "frame":
+            if len(parts) < 5:
+                self.send_error(400, "Missing frame identifier")
+                return
+            if not files:
+                self.send_error(404, "No frames recorded in modality")
+                return
+
+            frame_id = parts[4]
+            # frame_id can be 'frame_000042.jpg' or integer '42'
+            if frame_id.isdigit():
+                idx = int(frame_id)
+                # 1-based index clamped to available frame range
+                idx_clamped = max(1, min(idx, len(files)))
+                target_file = os.path.join(target_dir, files[idx_clamped - 1])
+            else:
+                target_file = os.path.join(target_dir, os.path.basename(frame_id))
+                if not os.path.isfile(target_file) and files:
+                    target_file = os.path.join(target_dir, files[-1])
+
+            if not os.path.isfile(target_file):
+                self.send_error(404, "Frame image file not found")
+                return
+
+            try:
+                with open(target_file, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as ex:
+                self.send_error(500, f"Error reading frame: {ex}")
+        else:
+            self.send_error(404, f"Unknown action: {action}")
 
 
 class EdgeDaemon:

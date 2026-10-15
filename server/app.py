@@ -432,6 +432,143 @@ async def io_bytes_gen(data: bytes):
     yield data
 
 
+# ==============================================================================
+# Recordings & Historical Frame Playback Endpoints
+# ==============================================================================
+
+@app.get("/api/recordings/sessions")
+async def list_aggregated_sessions():
+    """
+    Queries all active edge devices for recorded sessions,
+    clusters simultaneous recording runs across the fleet,
+    and returns a clean list of playback sessions.
+    """
+    raw_sessions = []
+    async with aiohttp.ClientSession() as session:
+        for did, edge in list(known_edges.items()):
+            if not edge.get("online"):
+                continue
+            url = f"http://{edge['host']}:{edge['port']}/api/sessions"
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=2.0)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for s in data.get("sessions", []):
+                            raw_sessions.append({
+                                "device_id": did,
+                                "device_name": edge.get("device_name", did),
+                                "date": s.get("date"),
+                                "time": s.get("time"),
+                                "manifest": s.get("manifest", {})
+                            })
+            except Exception:
+                pass
+
+    clusters = []
+    for item in raw_sessions:
+        manifest = item["manifest"]
+        date = item["date"]
+        time_str = item["time"]
+        label = manifest.get("label", "Recording Session")
+        duration = manifest.get("duration_seconds", 0)
+        frames_rec = manifest.get("frames_recorded", {})
+        sensors = manifest.get("sensors", [])
+
+        # Match with an existing cluster if date matches and (times match or duration & label match)
+        matched_cluster = None
+        for c in clusters:
+            if c["date"] == date:
+                if c["time"] == time_str:
+                    matched_cluster = c
+                    break
+                if label and c["label"] == label and abs(c["duration_seconds"] - duration) <= 3.0:
+                    matched_cluster = c
+                    break
+
+        if not matched_cluster:
+            matched_cluster = {
+                "id": f"session_{date}_{time_str}",
+                "date": date,
+                "time": time_str,
+                "label": label,
+                "duration_seconds": duration,
+                "max_frames": 0,
+                "devices": []
+            }
+            clusters.append(matched_cluster)
+
+        mods = []
+        for s in sensors:
+            sid = s.get("id")
+            smod = s.get("modality", "rgb")
+            sname = s.get("name", sid)
+            fcount = frames_rec.get(sid, 0) if isinstance(frames_rec, dict) else 0
+            if fcount == 0 and isinstance(frames_rec, dict):
+                fcount = frames_rec.get(smod, 0)
+            mods.append({
+                "id": sid,
+                "modality": smod,
+                "name": sname,
+                "frames_count": fcount
+            })
+            matched_cluster["max_frames"] = max(matched_cluster["max_frames"], fcount)
+
+        matched_cluster["devices"].append({
+            "device_id": item["device_id"],
+            "device_name": item["device_name"],
+            "date": date,
+            "time": time_str,
+            "modalities": mods
+        })
+
+    clusters.sort(key=lambda c: (c["date"], c["time"]), reverse=True)
+    return {"sessions": clusters}
+
+
+@app.get("/api/recordings/{device_id}/{date}/{time_str}/{modality}/frames")
+async def get_device_session_frames(device_id: str, date: str, time_str: str, modality: str):
+    """Fetches the frame list for a specific device, session, and modality."""
+    edge = known_edges.get(device_id)
+    if not edge:
+        raise HTTPException(status_code=404, detail="Edge device not registered")
+
+    url = f"http://{edge['host']}:{edge['port']}/api/session/{date}/{time_str}/{modality}/frames"
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=4.0)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data
+                raise HTTPException(status_code=resp.status, detail="Error fetching session frames from edge")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed to reach edge device: {e}")
+
+
+@app.get("/proxy/recording/{device_id}/{date}/{time_str}/{modality}/{frame_id}")
+async def proxy_recording_frame(device_id: str, date: str, time_str: str, modality: str, frame_id: str):
+    """Proxies a recorded JPEG frame image from an edge device with HTTP caching."""
+    edge = known_edges.get(device_id)
+    if not edge:
+        raise HTTPException(status_code=404, detail="Edge device not registered")
+
+    frame_url = f"http://{edge['host']}:{edge['port']}/api/session/{date}/{time_str}/{modality}/frame/{frame_id}"
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(frame_url, timeout=aiohttp.ClientTimeout(total=5.0)) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    response = StreamingResponse(io_bytes_gen(data), media_type="image/jpeg")
+                    response.headers["Cache-Control"] = "public, max-age=86400"
+                    response.headers["Access-Control-Allow-Origin"] = "*"
+                    return response
+        except Exception:
+            pass
+    raise HTTPException(status_code=502, detail="Recording frame unreachable")
+
+
+
 # Static Files & Mobile Dashboard UI
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
