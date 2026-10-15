@@ -136,56 +136,72 @@ class YDLidarDriver:
             # 1. Try PySerial
             try:
                 import serial
-                ser = serial.Serial(p, baudrate=self.baudrate, timeout=0.5)
-                ser.dtr = False
+                ser = serial.Serial(
+                    p,
+                    baudrate=self.baudrate,
+                    timeout=0.1,
+                    write_timeout=0.5,
+                    rtscts=False,
+                    dsrdtr=False,
+                    xonxoff=False
+                )
+                ser.dtr = True # Turn on LiDAR motor
                 ser.rts = False
                 ser.reset_input_buffer()
-                ser.write(b"\xa5\x60")
-                logger.info(f"[ydlidar] Opened serial port {p} at {self.baudrate} baud via pyserial")
+                ser.reset_output_buffer()
+                try:
+                    ser.write(b"\xa5\x65") # Stop scan
+                    time.sleep(0.05)
+                    ser.reset_input_buffer()
+                    ser.write(b"\xa5\x60") # Start scan
+                except Exception:
+                    pass
+                logger.info(f"[ydlidar] Opened serial port {p} at {self.baudrate} baud (DTR=True)")
                 return ("pyserial", ser, p)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ydlidar] pyserial open failed on {p}: {e}")
 
             # 2. Try native Linux termios
             if os.name != 'nt':
                 try:
-                    import termios, tty
-                    fd = os.open(p, os.O_RDWR | os.O_NOCTTY)
+                    import termios, fcntl, struct
+                    fd = os.open(p, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
                     attrs = termios.tcgetattr(fd)
-                    tty.setraw(fd)
+                    attrs[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP |
+                                  termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
+                    attrs[1] &= ~termios.OPOST
+                    attrs[2] &= ~(termios.CSIZE | termios.PARENB | termios.CRTSCTS)
+                    attrs[2] |= (termios.CS8 | termios.CLOCAL | termios.CREAD)
+                    attrs[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG | termios.IEXTEN)
                     speed = getattr(termios, f'B{self.baudrate}', termios.B230400 if hasattr(termios, 'B230400') else termios.B115200)
                     attrs[4] = speed
                     attrs[5] = speed
-                    attrs[6][termios.VMIN] = 1
-                    attrs[6][termios.VTIME] = 5
+                    attrs[6][termios.VMIN] = 0
+                    attrs[6][termios.VTIME] = 0
+                    termios.tcflush(fd, termios.TCIOFLUSH)
                     termios.tcsetattr(fd, termios.TCSANOW, attrs)
-                    os.write(fd, b"\xa5\x60")
-                    logger.info(f"[ydlidar] Opened serial port {p} at {self.baudrate} baud via native termios")
+                    try:
+                        TIOCMBIS = 0x5416
+                        TIOCM_DTR = 0x002
+                        fcntl.ioctl(fd, TIOCMBIS, struct.pack('I', TIOCM_DTR))
+                    except Exception:
+                        pass
+                    try:
+                        os.write(fd, b"\xa5\x65")
+                        time.sleep(0.05)
+                        termios.tcflush(fd, termios.TCIFLUSH)
+                        os.write(fd, b"\xa5\x60")
+                    except Exception:
+                        pass
+                    logger.info(f"[ydlidar] Opened serial port {p} at {self.baudrate} baud via native termios (DTR=True)")
                     return ("native", fd, p)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[ydlidar] native open failed on {p}: {e}")
 
         return None
 
-    def _read_bytes(self, ser_type, ser_obj, count):
-        buf = bytearray()
-        t_start = time.time()
-        while len(buf) < count and self.running and (time.time() - t_start < 0.5):
-            needed = count - len(buf)
-            try:
-                if ser_type == "pyserial":
-                    chunk = ser_obj.read(needed)
-                else:
-                    chunk = os.read(ser_obj, needed)
-                if chunk:
-                    buf.extend(chunk)
-                else:
-                    time.sleep(0.005)
-            except Exception:
-                break
-        return bytes(buf)
-
     def _serial_loop(self):
+        point_bytes = 3 # T-mini Plus default: 1 byte quality/intensity + 2 bytes distance
         while self.running:
             ser_conn = self._open_serial()
             if not ser_conn:
@@ -193,66 +209,93 @@ class YDLidarDriver:
                 continue
 
             ser_type, ser_obj, port_name = ser_conn
+            logger.info(f"[ydlidar] Starting streaming packet decoder on {port_name} (ser_type={ser_type})")
+            buf = bytearray()
+            last_stat_log = time.monotonic()
+            total_packets = 0
             try:
                 while self.running:
-                    # Sync to header 0xAA 0x55
-                    b1 = self._read_bytes(ser_type, ser_obj, 1)
-                    if b1 != b'\xaa':
-                        continue
-                    b2 = self._read_bytes(ser_type, ser_obj, 1)
-                    if b2 != b'\x55':
-                        continue
+                    try:
+                        if ser_type == "pyserial":
+                            chunk = ser_obj.read(ser_obj.in_waiting or 128)
+                        else:
+                            chunk = os.read(ser_obj, 1024)
+                    except Exception:
+                        break
 
-                    # Read CT (1 byte) + LSN (1 byte)
-                    hdr = self._read_bytes(ser_type, ser_obj, 2)
-                    if len(hdr) < 2:
-                        continue
-                    ct = hdr[0]
-                    lsn = hdr[1]
-                    if lsn == 0:
-                        continue
+                    if chunk:
+                        buf.extend(chunk)
+                    else:
+                        time.sleep(0.005)
 
-                    # Read FSA (2), LSA (2), CS (2)
-                    info = self._read_bytes(ser_type, ser_obj, 6)
-                    if len(info) < 6:
-                        continue
-                    fsa = int.from_bytes(info[0:2], 'little')
-                    lsa = int.from_bytes(info[2:4], 'little')
+                    now = time.monotonic()
+                    while len(buf) >= 10:
+                        # Sync to 0xAA 0x55 or timestamp 0xAA 0x66
+                        if buf[0] != 0xaa:
+                            buf.pop(0)
+                            continue
+                        if buf[1] == 0x66:
+                            # 8-byte timestamp package
+                            if len(buf) >= 8:
+                                del buf[:8]
+                            else:
+                                break
+                            continue
+                        if buf[1] != 0x55:
+                            buf.pop(0)
+                            continue
 
-                    # Read sample points (lsn * 2 bytes)
-                    sample_bytes = self._read_bytes(ser_type, ser_obj, lsn * 2)
-                    if len(sample_bytes) < lsn * 2:
-                        continue
+                        ct = buf[2]
+                        lsn = buf[3]
+                        if lsn == 0 or lsn > 80:
+                            buf.pop(0)
+                            continue
 
-                    angle_fsa = (fsa >> 1) / 64.0
-                    angle_lsa = (lsa >> 1) / 64.0
-                    diff = (angle_lsa - angle_fsa)
-                    if diff < 0:
-                        diff += 360.0
+                        pkg_len = 10 + lsn * point_bytes
+                        if len(buf) < pkg_len:
+                            # Wait for full packet to arrive in buffer
+                            break
 
-                    now = time.time()
-                    with self.points_lock:
-                        if (ct & 0x01) == 0x01:
-                            # Start of new revolution, clear points older than 0.5s
-                            cutoff = now - 0.5
-                            self.points = {deg: val for deg, val in self.points.items() if val[1] > cutoff}
+                        fsa = buf[4] | (buf[5] << 8)
+                        lsa = buf[6] | (buf[7] << 8)
+                        angle_fsa = (fsa >> 1) / 64.0
+                        angle_lsa = (lsa >> 1) / 64.0
+                        diff = (angle_lsa - angle_fsa) % 360.0
+                        step = diff / max(lsn - 1, 1)
 
-                        for i in range(lsn):
-                            sample = int.from_bytes(sample_bytes[i*2:i*2+2], 'little')
-                            dist_mm = sample / 4.0
-                            if dist_mm > 40 and dist_mm <= 12000:
-                                dist_m = dist_mm / 1000.0
-                                angle = (angle_fsa + (diff / max(lsn - 1, 1)) * i) % 360.0
-                                self.points[round(angle, 1)] = (dist_m, now)
-                                self.last_hardware_time = now
-                                self.is_hardware = True
+                        sample_data = buf[10:pkg_len]
+                        with self.points_lock:
+                            if (ct & 0x01) == 0x01:
+                                # New revolution, prune old points
+                                cutoff = now - 0.6
+                                self.points = {deg: val for deg, val in self.points.items() if val[1] > cutoff}
+
+                            for i in range(lsn):
+                                raw_dist = sample_data[i*3+1] | (sample_data[i*3+2] << 8)
+                                dist_mm = (raw_dist & 0xFFFC) / 4.0
+                                if 40.0 < dist_mm <= 12000.0:
+                                    dist_m = dist_mm / 1000.0
+                                    angle = (angle_fsa + step * i) % 360.0
+                                    self.points[round(angle, 1)] = (dist_m, now)
+                                    self.last_hardware_time = now
+                                    self.is_hardware = True
+
+                        total_packets += 1
+                        if total_packets % 200 == 1 or now - last_stat_log > 10.0:
+                            logger.info(f"[ydlidar] Streaming: {total_packets} packets decoded, {len(self.points)} active 360deg points")
+                            last_stat_log = now
+
+                        del buf[:pkg_len]
+
             except Exception as e:
                 logger.info(f"[ydlidar] Serial connection error on {port_name}: {e}")
             finally:
                 try:
                     if ser_type == "pyserial":
+                        ser_obj.write(b"\xa5\x65")
                         ser_obj.close()
                     else:
+                        os.write(ser_obj, b"\xa5\x65")
                         os.close(ser_obj)
                 except Exception:
                     pass
@@ -267,10 +310,10 @@ class YDLidarDriver:
         scale = (min(self.width, self.height) // 2 - 36) / max_range
 
         # Concentric distance rings
-        rings = [(1.0, (160, 45, 45), '1m'),
+        rings = [(1.0, (180, 40, 40), '1m (Red)'),
                  (2.0, (40, 60, 90), '2m'),
                  (4.0, (40, 60, 90), '4m'),
-                 (6.0, (45, 95, 180), '6m'),
+                 (6.0, (41, 121, 255), '6m (Blue)'),
                  (8.0, (30, 45, 70), '8m')]
         for r_m, color, label in rings:
             r_px = r_m * scale
@@ -291,7 +334,7 @@ class YDLidarDriver:
         draw.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(0, 229, 255), outline=(255, 255, 255))
         draw.polygon([(cx, cy - 14), (cx - 5, cy - 6), (cx + 5, cy - 6)], fill=(255, 255, 255))
 
-        now = time.time()
+        now = time.monotonic()
         pt_list = []
         is_live = False
         with self.points_lock:
@@ -300,7 +343,7 @@ class YDLidarDriver:
                 is_live = True
 
         if not is_live:
-            t = now
+            t = time.time()
             for deg in range(0, 360):
                 rad = math.radians(deg)
                 wall_x = 4.2 / max(abs(math.cos(rad)), 0.15)
@@ -342,7 +385,7 @@ class YDLidarDriver:
 
         status_txt = 'LIVE HARDWARE' if is_live else 'STANDBY / SIMULATION'
         status_col = (0, 230, 118) if is_live else (255, 190, 0)
-        draw.text((16, 10), 'YDLIDAR T-mini Pro (YDTMP-12) 25ARZ0006', fill=(220, 230, 245))
+        draw.text((16, 10), 'YDLIDAR T-mini Plus (YDTMP-12 25ARZ0006)', fill=(220, 230, 245))
         draw.text((16, 26), f'POINTS: {len(pt_list)}  |  {status_txt}', fill=status_col)
 
         buf = io.BytesIO()
