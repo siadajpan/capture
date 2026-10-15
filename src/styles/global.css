@@ -1762,3 +1762,11 @@ body {
   color: var(--accent-cyan);
 }
 
+.btn-secondary-action.active {
+  background: rgba(0, 229, 255, 0.18);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-weight: 600;
+  box-shadow: 0 0 10px rgba(0, 229, 255, 0.2);
+}
+

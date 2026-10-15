@@ -129,13 +129,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             <button type="button" class="transport-btn" id="btnPlayLast" title="Last Frame (End)">⏭</button>
           </div>
 
-          <div class="playback-hud-text">
-            <span>FRAME <strong class="playback-hud-frame" id="playbackHudFrame">1 / 1</strong></span>
+          <div class="playback-hud-text" id="playbackHudContainer">
+            <span><strong class="playback-hud-frame" id="playbackHudFrame">1 / 1</strong></span>
             <span style="color:var(--text-dim);">|</span>
             <span id="playbackHudTime">+00:00.0s / 00:00.0s</span>
           </div>
 
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn-secondary-action active" id="btnSyncMode" title="Toggle between physical hardware timestamp synchronization and naive frame index">⏱️ Time Synced</button>
             <span class="buffer-chip" id="playbackBufferBadge" title="Frames cached in browser memory for instant smooth playback">RAM: 0%</span>
             <button type="button" class="btn-secondary-action" id="btnSyncHub" title="Download all session frames to PC Hub disk for offline access">💾 Cache to PC</button>
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:4px;">Speed:</span>
@@ -376,7 +377,15 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         isPlaying: false,
         playbackTimer: null,
         playbackSpeed: 1.0,
-        selectedPlaybackFilter: 'all'
+        selectedPlaybackFilter: 'all',
+
+        // Hardware Timestamp Synchronization State
+        timeSyncEnabled: true,
+        streamMetadata: {},
+        commonStartTs: 0.0,
+        commonEndTs: 0.0,
+        commonDuration: 0.0,
+        currentTimeSec: 0.0
       };
 
       const el = {
@@ -412,6 +421,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         playbackBufferBar: document.getElementById('playbackBufferBar'),
         playbackBufferBadge: document.getElementById('playbackBufferBadge'),
         btnSyncHub: document.getElementById('btnSyncHub'),
+        btnSyncMode: document.getElementById('btnSyncMode'),
 
         modalBackdrop: document.getElementById('modalBackdrop'),
         closeModalBtn: document.getElementById('closeModalBtn'),
@@ -632,15 +642,45 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           el.playbackDeviceFilter.addEventListener('change', (e) => {
             state.selectedPlaybackFilter = e.target.value;
             renderPlaybackGrid();
+            updatePlaybackView();
+          });
+        }
+
+        if (el.btnSyncMode) {
+          el.btnSyncMode.addEventListener('click', () => {
+            state.timeSyncEnabled = !state.timeSyncEnabled;
+            if (state.timeSyncEnabled) {
+              el.btnSyncMode.textContent = '⏱️ Time Synced';
+              el.btnSyncMode.classList.add('active');
+              el.btnSyncMode.title = 'Current: Physical Time Synchronization (Click for Raw Index Mode)';
+              if (state.commonDuration > 0) {
+                const pct = (state.currentFrameIdx - 1) / Math.max(1, state.maxFrames - 1);
+                state.currentTimeSec = pct * state.commonDuration;
+              }
+            } else {
+              el.btnSyncMode.textContent = '🔢 Raw Index';
+              el.btnSyncMode.classList.remove('active');
+              el.btnSyncMode.title = 'Current: Naive Frame Index Mode (Click for Time Synced Mode)';
+              if (state.commonDuration > 0) {
+                const pct = state.currentTimeSec / state.commonDuration;
+                state.currentFrameIdx = Math.max(1, Math.min(Math.round(pct * (state.maxFrames - 1)) + 1, state.maxFrames));
+              }
+            }
+            configureScrubberSlider();
+            updatePlaybackView();
           });
         }
 
         if (el.playbackSlider) {
           el.playbackSlider.addEventListener('input', (e) => {
-            const idx = parseInt(e.target.value, 10) || 1;
             if (scrubRafId) cancelAnimationFrame(scrubRafId);
             scrubRafId = requestAnimationFrame(() => {
-              setPlaybackFrame(idx);
+              if (state.timeSyncEnabled) {
+                seekToTime(parseFloat(e.target.value) || 0.0);
+              } else {
+                const idx = parseInt(e.target.value, 10) || 1;
+                setPlaybackFrame(idx);
+              }
             });
           });
         }
@@ -649,11 +689,23 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           el.btnSyncHub.addEventListener('click', triggerSyncHub);
         }
 
-        if (el.btnPlayFirst) el.btnPlayFirst.addEventListener('click', () => setPlaybackFrame(1));
-        if (el.btnPlayPrev) el.btnPlayPrev.addEventListener('click', () => setPlaybackFrame(state.currentFrameIdx - 1));
+        if (el.btnPlayFirst) el.btnPlayFirst.addEventListener('click', () => {
+          if (state.timeSyncEnabled) seekToTime(0);
+          else setPlaybackFrame(1);
+        });
+        if (el.btnPlayPrev) el.btnPlayPrev.addEventListener('click', () => {
+          if (state.timeSyncEnabled) seekToTime(state.currentTimeSec - 0.1);
+          else setPlaybackFrame(state.currentFrameIdx - 1);
+        });
         if (el.btnPlayToggle) el.btnPlayToggle.addEventListener('click', togglePlayback);
-        if (el.btnPlayNext) el.btnPlayNext.addEventListener('click', () => setPlaybackFrame(state.currentFrameIdx + 1));
-        if (el.btnPlayLast) el.btnPlayLast.addEventListener('click', () => setPlaybackFrame(state.maxFrames));
+        if (el.btnPlayNext) el.btnPlayNext.addEventListener('click', () => {
+          if (state.timeSyncEnabled) seekToTime(state.currentTimeSec + 0.1);
+          else setPlaybackFrame(state.currentFrameIdx + 1);
+        });
+        if (el.btnPlayLast) el.btnPlayLast.addEventListener('click', () => {
+          if (state.timeSyncEnabled) seekToTime(state.commonDuration);
+          else setPlaybackFrame(state.maxFrames);
+        });
 
         if (el.playbackSpeedSelect) {
           el.playbackSpeedSelect.addEventListener('change', (e) => {
@@ -675,16 +727,20 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             togglePlayback();
           } else if (e.code === 'ArrowLeft') {
             e.preventDefault();
-            setPlaybackFrame(state.currentFrameIdx - 1);
+            if (state.timeSyncEnabled) seekToTime(state.currentTimeSec - 0.1);
+            else setPlaybackFrame(state.currentFrameIdx - 1);
           } else if (e.code === 'ArrowRight') {
             e.preventDefault();
-            setPlaybackFrame(state.currentFrameIdx + 1);
+            if (state.timeSyncEnabled) seekToTime(state.currentTimeSec + 0.1);
+            else setPlaybackFrame(state.currentFrameIdx + 1);
           } else if (e.code === 'Home') {
             e.preventDefault();
-            setPlaybackFrame(1);
+            if (state.timeSyncEnabled) seekToTime(0);
+            else setPlaybackFrame(1);
           } else if (e.code === 'End') {
             e.preventDefault();
-            setPlaybackFrame(state.maxFrames);
+            if (state.timeSyncEnabled) seekToTime(state.commonDuration);
+            else setPlaybackFrame(state.maxFrames);
           }
         });
       }
@@ -1061,7 +1117,129 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         } catch (e) {}
       }
 
-      function selectPlaybackSession(sessionId) {
+      function findClosestFrameIndex(timestamps, targetTs) {
+        if (!timestamps || timestamps.length === 0) return { frameIdx: 1, deltaMs: 0 };
+        const len = timestamps.length;
+        if (targetTs <= timestamps[0]) {
+          return { frameIdx: 1, deltaMs: Math.round((timestamps[0] - targetTs) * 1000) };
+        }
+        if (targetTs >= timestamps[len - 1]) {
+          return { frameIdx: len, deltaMs: Math.round((timestamps[len - 1] - targetTs) * 1000) };
+        }
+
+        let low = 0;
+        let high = len - 1;
+        while (low <= high) {
+          const mid = (low + high) >> 1;
+          const midVal = timestamps[mid];
+          if (midVal === targetTs) {
+            return { frameIdx: mid + 1, deltaMs: 0 };
+          } else if (midVal < targetTs) {
+            low = mid + 1;
+          } else {
+            high = mid - 1;
+          }
+        }
+
+        const idx1 = Math.max(0, Math.min(high, len - 1));
+        const idx2 = Math.max(0, Math.min(low, len - 1));
+        const diff1 = Math.abs(timestamps[idx1] - targetTs);
+        const diff2 = Math.abs(timestamps[idx2] - targetTs);
+        const bestIdx = diff1 <= diff2 ? idx1 : idx2;
+        const deltaMs = Math.round((timestamps[bestIdx] - targetTs) * 1000);
+        return { frameIdx: bestIdx + 1, deltaMs };
+      }
+
+      function getFrameForStream(devId, modId, maxCount) {
+        const fKey = `${devId}:${modId}`;
+        const meta = state.streamMetadata[fKey];
+        if (state.timeSyncEnabled && meta && meta.timestamps && meta.timestamps.length > 0) {
+          const targetTs = state.commonStartTs + state.currentTimeSec;
+          return findClosestFrameIndex(meta.timestamps, targetTs);
+        } else if (state.timeSyncEnabled && state.commonDuration > 0) {
+          const pct = Math.max(0, Math.min(1, state.currentTimeSec / state.commonDuration));
+          const frameIdx = Math.max(1, Math.min(Math.round(pct * (maxCount - 1)) + 1, maxCount));
+          return { frameIdx, deltaMs: 0 };
+        } else {
+          const frameIdx = Math.max(1, Math.min(state.currentFrameIdx, maxCount));
+          return { frameIdx, deltaMs: 0 };
+        }
+      }
+
+      function calculateTemporalOverlap() {
+        const metas = Object.values(state.streamMetadata).filter(m => m && m.timestamps && m.timestamps.length > 0);
+        if (metas.length === 0) {
+          state.commonStartTs = 0;
+          state.commonEndTs = 0;
+          state.commonDuration = (state.currentSession?.duration_seconds || (state.maxFrames / 10.0));
+          return;
+        }
+
+        const starts = metas.map(m => m.start_ts || m.timestamps[0]);
+        const ends = metas.map(m => m.end_ts || m.timestamps[m.timestamps.length - 1]);
+
+        const commonStart = Math.max(...starts);
+        const commonEnd = Math.min(...ends);
+
+        if (commonEnd > commonStart + 0.1) {
+          state.commonStartTs = commonStart;
+          state.commonEndTs = commonEnd;
+          state.commonDuration = commonEnd - commonStart;
+        } else {
+          // If overlap is tiny or non-overlapping, fall back to union range
+          state.commonStartTs = Math.min(...starts);
+          state.commonEndTs = Math.max(...ends);
+          state.commonDuration = Math.max(1, state.commonEndTs - state.commonStartTs);
+        }
+      }
+
+      function configureScrubberSlider() {
+        if (!el.playbackSlider) return;
+        if (state.timeSyncEnabled && state.commonDuration > 0) {
+          el.playbackSlider.min = '0';
+          el.playbackSlider.max = state.commonDuration.toFixed(2);
+          el.playbackSlider.step = '0.05';
+          el.playbackSlider.value = state.currentTimeSec.toFixed(2);
+        } else {
+          el.playbackSlider.min = '1';
+          el.playbackSlider.max = String(state.maxFrames);
+          el.playbackSlider.step = '1';
+          el.playbackSlider.value = String(state.currentFrameIdx);
+        }
+      }
+
+      async function loadSessionStreamMetadata(session) {
+        state.streamMetadata = {};
+        const promises = [];
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            const streamKey = `${dev.device_id}:${mod.id}`;
+            const url = `${hubBaseUrl}/api/recordings/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/frames`;
+            promises.push(
+              fetch(url)
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                  if (data && data.timestamps && data.timestamps.length > 0) {
+                    state.streamMetadata[streamKey] = data;
+                  }
+                })
+                .catch(e => console.warn(`Failed fetching timestamps for ${streamKey}:`, e))
+            );
+          });
+        });
+        await Promise.allSettled(promises);
+        calculateTemporalOverlap();
+        configureScrubberSlider();
+
+        // Update meta badge with overlap duration
+        if (el.playbackSessionMetaBadge && state.commonDuration > 0) {
+          const devCount = (session.devices || []).length;
+          el.playbackSessionMetaBadge.textContent = `${state.maxFrames} frames • ${state.commonDuration.toFixed(1)}s overlap • ${devCount} devices`;
+        }
+        updatePlaybackView();
+      }
+
+      async function selectPlaybackSession(sessionId) {
         const session = state.playbackSessions.find(s => s.id === sessionId);
         if (!session) return;
 
@@ -1072,6 +1250,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         state.currentSession = session;
         state.maxFrames = Math.max(1, session.max_frames || 1);
         state.currentFrameIdx = 1;
+        state.currentTimeSec = 0.0;
+        state.streamMetadata = {};
 
         if (el.playbackSessionSelect) el.playbackSessionSelect.value = sessionId;
 
@@ -1096,16 +1276,16 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }
 
         // Setup scrubber slider
-        if (el.playbackSlider) {
-          el.playbackSlider.min = '1';
-          el.playbackSlider.max = String(state.maxFrames);
-          el.playbackSlider.value = '1';
-        }
+        configureScrubberSlider();
 
         stopPlayback();
         renderPlaybackGrid();
         updatePlaybackHUD();
         checkHubCacheStatus(sessionId);
+
+        // Fetch stream timestamps for synchronized playback
+        await loadSessionStreamMetadata(session);
+
         startPrebuffering();
       }
 
@@ -1138,9 +1318,16 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         streams.forEach(({ dev, mod }) => {
           const modType = (mod.modality || 'rgb').toLowerCase();
           const maxCount = mod.frames_count || state.maxFrames;
-          const initialFrame = Math.max(1, Math.min(state.currentFrameIdx, maxCount));
+          const { frameIdx: initialFrame, deltaMs: initialDelta } = getFrameForStream(dev.device_id, mod.id, maxCount);
           const key = `${dev.device_id}:${mod.id}:${initialFrame}`;
           const initialUrl = frameCache.get(key) || `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
+
+          let badgeContent = `Frame ${initialFrame} / ${maxCount}`;
+          if (state.timeSyncEnabled) {
+            const deltaFormatted = (initialDelta >= 0 ? '+' : '') + initialDelta + 'ms';
+            const color = Math.abs(initialDelta) <= 60 ? 'var(--accent-cyan)' : 'var(--accent-amber)';
+            badgeContent += ` <span style="color:${color}; font-size:0.7rem; font-weight:600; margin-left:4px;">(Δ${deltaFormatted})</span>`;
+          }
 
           html += `
             <div class="playback-card"
@@ -1164,7 +1351,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
               <div class="playback-card-footer">
                 <span style="color:var(--text-main); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(mod.name || mod.id)}">${escapeHtml(mod.name || mod.id)}</span>
-                <span class="card-frame-badge">Frame ${initialFrame} / ${maxCount}</span>
+                <span class="card-frame-badge">${badgeContent}</span>
               </div>
             </div>
           `;
@@ -1178,7 +1365,37 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         idx = Math.max(1, Math.min(idx, state.maxFrames));
         state.currentFrameIdx = idx;
 
-        if (el.playbackSlider) el.playbackSlider.value = String(idx);
+        if (state.commonDuration > 0) {
+          const pct = (state.currentFrameIdx - 1) / Math.max(1, state.maxFrames - 1);
+          state.currentTimeSec = pct * state.commonDuration;
+        }
+
+        updatePlaybackView();
+      }
+
+      function seekToTime(timeSec) {
+        if (!state.currentSession) return;
+        state.currentTimeSec = Math.max(0, Math.min(timeSec, state.commonDuration));
+
+        if (state.commonDuration > 0) {
+          const pct = state.currentTimeSec / state.commonDuration;
+          state.currentFrameIdx = Math.max(1, Math.min(Math.round(pct * (state.maxFrames - 1)) + 1, state.maxFrames));
+        }
+
+        updatePlaybackView();
+      }
+
+      function updatePlaybackView() {
+        if (!state.currentSession) return;
+
+        if (el.playbackSlider) {
+          if (state.timeSyncEnabled) {
+            el.playbackSlider.value = state.currentTimeSec.toFixed(2);
+          } else {
+            el.playbackSlider.value = String(state.currentFrameIdx);
+          }
+        }
+
         updatePlaybackHUD();
 
         const cards = document.querySelectorAll('.playback-card');
@@ -1188,7 +1405,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           const time = card.dataset.time;
           const mod = card.dataset.modality;
           const cardMax = parseInt(card.dataset.maxFrames, 10) || state.maxFrames;
-          const devIdx = Math.max(1, Math.min(idx, cardMax));
+
+          const { frameIdx: devIdx, deltaMs } = getFrameForStream(devId, mod, cardMax);
           const key = `${devId}:${mod}:${devIdx}`;
 
           const img = card.querySelector('.playback-frame-img');
@@ -1204,19 +1422,37 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
           const badge = card.querySelector('.card-frame-badge');
           if (badge) {
-            badge.textContent = `Frame ${devIdx} / ${cardMax}`;
+            if (state.timeSyncEnabled) {
+              const deltaFormatted = (deltaMs >= 0 ? '+' : '') + deltaMs + 'ms';
+              const color = Math.abs(deltaMs) <= 60 ? 'var(--accent-cyan)' : 'var(--accent-amber)';
+              badge.innerHTML = `Frame ${devIdx} / ${cardMax} <span style="color:${color}; font-size:0.7rem; font-weight:600; margin-left:4px;">(Δ${deltaFormatted})</span>`;
+            } else {
+              badge.textContent = `Frame ${devIdx} / ${cardMax}`;
+            }
           }
         });
       }
 
       function updatePlaybackHUD() {
-        if (el.playbackHudFrame) {
-          el.playbackHudFrame.textContent = `${state.currentFrameIdx} / ${state.maxFrames}`;
-        }
-        if (el.playbackHudTime) {
-          const currentSec = (state.currentFrameIdx - 1) / 10.0;
-          const totalSec = state.currentSession?.duration_seconds || (state.maxFrames / 10.0);
-          el.playbackHudTime.textContent = `+${formatTimeSec(currentSec)} / ${formatTimeSec(totalSec)}`;
+        if (!state.currentSession) return;
+
+        if (state.timeSyncEnabled) {
+          if (el.playbackHudFrame) {
+            el.playbackHudFrame.innerHTML = `⏱️ ${formatTimeSec(state.currentTimeSec)} / ${formatTimeSec(state.commonDuration)}`;
+          }
+          if (el.playbackHudTime) {
+            const pct = state.commonDuration > 0 ? Math.round((state.currentTimeSec / state.commonDuration) * 100) : 0;
+            el.playbackHudTime.innerHTML = `<span style="color:var(--accent-cyan); font-weight:600;">SYNCED</span> (${pct}%)`;
+          }
+        } else {
+          if (el.playbackHudFrame) {
+            el.playbackHudFrame.textContent = `${state.currentFrameIdx} / ${state.maxFrames}`;
+          }
+          if (el.playbackHudTime) {
+            const currentSec = (state.currentFrameIdx - 1) / 10.0;
+            const totalSec = state.currentSession?.duration_seconds || (state.maxFrames / 10.0);
+            el.playbackHudTime.textContent = `+${formatTimeSec(currentSec)} / ${formatTimeSec(totalSec)}`;
+          }
         }
       }
 
@@ -1231,8 +1467,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         if (state.isPlaying) {
           stopPlayback();
         } else {
-          if (state.currentFrameIdx >= state.maxFrames) {
-            setPlaybackFrame(1);
+          if (state.timeSyncEnabled) {
+            if (state.currentTimeSec >= state.commonDuration - 0.05) {
+              seekToTime(0);
+            }
+          } else {
+            if (state.currentFrameIdx >= state.maxFrames) {
+              setPlaybackFrame(1);
+            }
           }
           startPlayback();
         }
@@ -1241,17 +1483,33 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       function playbackLoop(timestamp) {
         if (!state.isPlaying) return;
 
-        const baseFps = 10;
-        const targetFps = baseFps * state.playbackSpeed;
-        const frameIntervalMs = 1000 / targetFps;
-
         if (!lastFrameTime) lastFrameTime = timestamp;
         const elapsed = timestamp - lastFrameTime;
 
-        if (elapsed >= frameIntervalMs) {
-          lastFrameTime = timestamp - (elapsed % frameIntervalMs);
-          const nextIdx = (state.currentFrameIdx >= state.maxFrames) ? 1 : state.currentFrameIdx + 1;
-          setPlaybackFrame(nextIdx);
+        if (state.timeSyncEnabled) {
+          if (elapsed >= 33) {
+            const elapsedSec = elapsed / 1000.0;
+            lastFrameTime = timestamp;
+            state.currentTimeSec += elapsedSec * state.playbackSpeed;
+            if (state.currentTimeSec >= state.commonDuration) {
+              state.currentTimeSec = 0; // loop
+            }
+            if (state.commonDuration > 0) {
+              const pct = state.currentTimeSec / state.commonDuration;
+              state.currentFrameIdx = Math.max(1, Math.min(Math.round(pct * (state.maxFrames - 1)) + 1, state.maxFrames));
+            }
+            updatePlaybackView();
+          }
+        } else {
+          const baseFps = 10;
+          const targetFps = baseFps * state.playbackSpeed;
+          const frameIntervalMs = 1000 / targetFps;
+
+          if (elapsed >= frameIntervalMs) {
+            lastFrameTime = timestamp - (elapsed % frameIntervalMs);
+            const nextIdx = (state.currentFrameIdx >= state.maxFrames) ? 1 : state.currentFrameIdx + 1;
+            setPlaybackFrame(nextIdx);
+          }
         }
 
         if (state.isPlaying) {

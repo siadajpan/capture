@@ -887,6 +887,7 @@ class CollectionManager:
                 os.makedirs(mod_path, exist_ok=True)
                 self.modality_paths[sensor.sensor_id] = mod_path
                 self.frame_counts[sensor.sensor_id] = 0
+            self.frame_timestamps = {sensor.sensor_id: [] for sensor in self.sensors}
 
             # Write session metadata
             metadata = {
@@ -948,6 +949,17 @@ class CollectionManager:
                 except Exception as e:
                     logger.error(f"Error updating manifest: {e}")
 
+            # Save timestamps.json into each modality folder
+            if hasattr(self, "frame_timestamps") and hasattr(self, "modality_paths"):
+                for sid, t_list in self.frame_timestamps.items():
+                    m_path = self.modality_paths.get(sid)
+                    if m_path and os.path.isdir(m_path):
+                        try:
+                            with open(os.path.join(m_path, "timestamps.json"), "w") as tf:
+                                json.dump(t_list, tf)
+                        except Exception as te:
+                            logger.error(f"Failed to write timestamps.json for {sid}: {te}")
+
             logger.info(f"Stopped collection session {self.session_id}. Recorded: {self.frame_counts}")
             result = {
                 "status": "recording_stopped",
@@ -973,8 +985,11 @@ class CollectionManager:
 
                 frame_bytes = sensor.get_jpeg_frame()
                 if frame_bytes:
+                    now_ts = round(time.time(), 4)
                     cnt = self.frame_counts.get(sensor.sensor_id, 0) + 1
                     self.frame_counts[sensor.sensor_id] = cnt
+                    if hasattr(self, "frame_timestamps") and sensor.sensor_id in self.frame_timestamps:
+                        self.frame_timestamps[sensor.sensor_id].append(now_ts)
                     filename = f"frame_{cnt:06d}.jpg"
                     file_path = os.path.join(folder, filename)
                     try:
@@ -1297,12 +1312,42 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                         manifest = json.load(mf)
                 except Exception:
                     pass
+
+            # Fast timestamps lookup: from timestamps.json or scandir mtimes
+            ts_cache_path = os.path.join(target_dir, "timestamps.json")
+            timestamps = []
+            if os.path.exists(ts_cache_path):
+                try:
+                    with open(ts_cache_path, "r") as tf:
+                        timestamps = json.load(tf)
+                except Exception:
+                    pass
+
+            if not timestamps and files:
+                try:
+                    entries = sorted([e for e in os.scandir(target_dir) if e.name.lower().endswith(".jpg") or e.name.lower().endswith(".jpeg")], key=lambda e: e.name)
+                    timestamps = [round(e.stat().st_mtime, 4) for e in entries]
+                    try:
+                        with open(ts_cache_path, "w") as tf:
+                            json.dump(timestamps, tf)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            start_ts = timestamps[0] if timestamps else 0.0
+            end_ts = timestamps[-1] if timestamps else 0.0
+
             self._send_json({
                 "date": date_entry,
                 "time": time_entry,
                 "modality": modality,
                 "total_frames": len(files),
                 "frames": files,
+                "timestamps": timestamps,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "duration": round(end_ts - start_ts, 3) if timestamps else 0.0,
                 "manifest": manifest
             })
 

@@ -529,10 +529,37 @@ async def list_aggregated_sessions():
 
 @app.get("/api/recordings/{device_id}/{date}/{time_str}/{modality}/frames")
 async def get_device_session_frames(device_id: str, date: str, time_str: str, modality: str):
-    """Fetches the frame list for a specific device, session, and modality."""
+    """Fetches the frame list and timestamps for a specific device, session, and modality."""
+    cache_meta = os.path.join(CACHE_DIR, device_id, date, time_str, modality, "frames.json")
+    if os.path.isfile(cache_meta):
+        try:
+            with open(cache_meta, "r") as f:
+                cached_data = json.load(f)
+            if cached_data.get("timestamps"):
+                return cached_data
+        except Exception:
+            pass
+
     edge = known_edges.get(device_id)
-    if not edge:
-        raise HTTPException(status_code=404, detail="Edge device not registered")
+    if not edge or not edge.get("online"):
+        # Fallback to local cache directory if edge is offline
+        disk_dir = os.path.join(CACHE_DIR, device_id, date, time_str, modality)
+        if os.path.isdir(disk_dir):
+            entries = sorted([e for e in os.scandir(disk_dir) if e.name.endswith(".jpg")], key=lambda e: e.name)
+            if entries:
+                ts = [round(e.stat().st_mtime, 4) for e in entries]
+                return {
+                    "date": date,
+                    "time": time_str,
+                    "modality": modality,
+                    "total_frames": len(entries),
+                    "frames": [e.name for e in entries],
+                    "timestamps": ts,
+                    "start_ts": ts[0],
+                    "end_ts": ts[-1],
+                    "duration": round(ts[-1] - ts[0], 3)
+                }
+        raise HTTPException(status_code=404, detail="Edge device not registered or offline")
 
     url = f"http://{edge['host']}:{edge['port']}/api/session/{date}/{time_str}/{modality}/frames"
     async with aiohttp.ClientSession() as session:
@@ -540,11 +567,35 @@ async def get_device_session_frames(device_id: str, date: str, time_str: str, mo
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=4.0)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    # Cache to disk for offline playback
+                    try:
+                        os.makedirs(os.path.dirname(cache_meta), exist_ok=True)
+                        with open(cache_meta, "w") as f:
+                            json.dump(data, f)
+                    except Exception:
+                        pass
                     return data
                 raise HTTPException(status_code=resp.status, detail="Error fetching session frames from edge")
         except HTTPException:
             raise
         except Exception as e:
+            # Fallback to local cache files if network hit fails
+            disk_dir = os.path.join(CACHE_DIR, device_id, date, time_str, modality)
+            if os.path.isdir(disk_dir):
+                entries = sorted([e for e in os.scandir(disk_dir) if e.name.endswith(".jpg")], key=lambda e: e.name)
+                if entries:
+                    ts = [round(e.stat().st_mtime, 4) for e in entries]
+                    return {
+                        "date": date,
+                        "time": time_str,
+                        "modality": modality,
+                        "total_frames": len(entries),
+                        "frames": [e.name for e in entries],
+                        "timestamps": ts,
+                        "start_ts": ts[0],
+                        "end_ts": ts[-1],
+                        "duration": round(ts[-1] - ts[0], 3)
+                    }
             raise HTTPException(status_code=502, detail=f"Failed to reach edge device: {e}")
 
 
@@ -586,6 +637,10 @@ async def _cache_session_worker(session_id: str):
                 for mod in dev.get("modalities", []):
                     mod_id = mod["id"]
                     fcount = mod.get("frames_count", 0)
+                    try:
+                        await get_device_session_frames(did, date_s, time_s, mod_id)
+                    except Exception:
+                        pass
                     for idx in range(1, fcount + 1):
                         fname = f"frame_{idx:06d}.jpg"
                         cpath = os.path.join(CACHE_DIR, did, date_s, time_s, mod_id, fname)
