@@ -457,6 +457,12 @@ class SensorDriver:
 
         if rpicam_bin and (sensor_type in ["rpicam", "libcamera", "camerav2", "imx219"] or not os.path.exists(self.device_node) or sensor_type == "auto"):
             try:
+                if os.name != 'nt':
+                    try:
+                        subprocess.run(["pkill", "-9", "-f", "wireplumber"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["pkill", "-9", "-f", "pipewire"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
                 cmd = [
                     rpicam_bin,
                     "-t", "0",
@@ -1358,6 +1364,10 @@ class EdgeDaemon:
         return None
 
     def get_network_info(self):
+        now = time.monotonic()
+        if hasattr(self, "_cached_net_info") and (now - getattr(self, "_cached_net_time", 0)) < 60.0:
+            return self._cached_net_info
+
         net_type = "unknown"
         iface = "unknown"
         ip_addr = "127.0.0.1"
@@ -1388,7 +1398,10 @@ class EdgeDaemon:
                     ip_addr = parts[2].split("/")[0]
         except Exception:
             pass
-        return {"type": net_type, "interface": iface, "ip": ip_addr, "ssid": ssid}
+        info = {"type": net_type, "interface": iface, "ip": ip_addr, "ssid": ssid}
+        self._cached_net_info = info
+        self._cached_net_time = now
+        return info
 
     def start_server(self):
         host = self.config.get("host", "0.0.0.0")
