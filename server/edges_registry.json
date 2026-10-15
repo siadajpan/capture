@@ -115,6 +115,52 @@
         "ip": "192.168.137.203",
         "ssid": "karol"
       }
+    },
+    "edge-pi-4b": {
+      "device_id": "edge-pi-4b",
+      "device_name": "Raspberry Pi 4B (Camera v2 + LiDAR)",
+      "host": "192.168.137.204",
+      "port": 5001,
+      "url": "http://192.168.137.204:5001",
+      "online": true,
+      "last_seen": 1791991525.0,
+      "sensors": [
+        {
+          "id": "rgb-camerav2",
+          "modality": "rgb",
+          "name": "Raspberry Pi Camera Module v2 (IMX219)",
+          "resolution": "640x480",
+          "fps": 15
+        },
+        {
+          "id": "lidar-topdown",
+          "modality": "depth",
+          "name": "LiDAR YDTMP-12 25ARZ0006 (Top-Down Radar)",
+          "resolution": "640x640",
+          "fps": 10
+        }
+      ],
+      "modalities": [
+        "rgb",
+        "depth"
+      ],
+      "collection": {
+        "is_recording": false,
+        "session_id": null,
+        "session_dir": null,
+        "duration_seconds": 0,
+        "frame_counts": {},
+        "storage_root": "/home/pi/edge_data",
+        "disk_free_gb": 28.5,
+        "disk_total_gb": 32.0,
+        "disk_used_percent": 11.0
+      },
+      "network": {
+        "type": "hotspot",
+        "interface": "wlan0",
+        "ip": "192.168.137.204",
+        "ssid": "karol"
+      }
     }
   }
 }

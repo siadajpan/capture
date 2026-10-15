@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import json
+import math
 import socket
 import logging
 import threading
@@ -74,8 +75,297 @@ def load_config():
     return DEFAULT_CONFIG.copy()
 
 
+class YDLidarDriver:
+    """
+    High-performance driver for YDLIDAR T-mini Pro (YDTMP-12) 12m LiDAR.
+    Decodes raw serial packets (0xAA 0x55) at 230400 baud.
+    Generates dynamic top-down 2D depth radar view with distance-based colors:
+      <= 1m: Red (#ff1f1f)
+      >= 6m: Blue (#2979ff)
+      1m < d < 6m: Smooth gradient (Red -> Yellow -> Green -> Cyan -> Blue)
+    Includes graceful automatic fallback to simulated rotating radar if hardware is not connected.
+    """
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.port = cfg.get("device", "/dev/ttyUSB0")
+        self.baudrate = cfg.get("baudrate", 230400)
+        self.width = cfg.get("width", 640)
+        self.height = cfg.get("height", 640)
+        self.fps = cfg.get("fps", 10)
+        self.points = {}
+        self.points_lock = threading.Lock()
+        self.is_hardware = False
+        self.last_hardware_time = 0.0
+        self.running = True
+        self.latest_jpeg = None
+        self.last_render_time = 0.0
+
+        # Start serial reader background thread
+        self.reader_thread = threading.Thread(target=self._serial_loop, daemon=True)
+        self.reader_thread.start()
+
+    def get_color(self, d):
+        if d <= 1.0:
+            return (255, 31, 31)
+        if d >= 6.0:
+            return (41, 121, 255)
+        t = (d - 1.0) / 5.0
+        if t < 0.25:
+            s = t / 0.25
+            return (255, int(31 + 189 * s), int(31 * (1 - s)))
+        elif t < 0.50:
+            s = (t - 0.25) / 0.25
+            return (int(255 * (1 - s)), int(220 + 10 * s), int(118 * s))
+        elif t < 0.75:
+            s = (t - 0.50) / 0.25
+            return (0, int(230 - 1 * s), int(118 + 137 * s))
+        else:
+            s = (t - 0.75) / 0.25
+            return (int(41 * s), int(229 * (1 - s) + 121 * s), 255)
+
+    def _open_serial(self):
+        candidate_ports = [self.port, "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1", "/dev/serial0"]
+        if os.name == 'nt':
+            candidate_ports = [self.port, "COM3", "COM4", "COM5", "COM6"]
+
+        for p in candidate_ports:
+            if not p:
+                continue
+            if os.name != 'nt' and not os.path.exists(p):
+                continue
+            # 1. Try PySerial
+            try:
+                import serial
+                ser = serial.Serial(p, baudrate=self.baudrate, timeout=0.5)
+                ser.dtr = False
+                ser.rts = False
+                ser.reset_input_buffer()
+                ser.write(b"\xa5\x60")
+                logger.info(f"[ydlidar] Opened serial port {p} at {self.baudrate} baud via pyserial")
+                return ("pyserial", ser, p)
+            except Exception:
+                pass
+
+            # 2. Try native Linux termios
+            if os.name != 'nt':
+                try:
+                    import termios, tty
+                    fd = os.open(p, os.O_RDWR | os.O_NOCTTY)
+                    attrs = termios.tcgetattr(fd)
+                    tty.setraw(fd)
+                    speed = getattr(termios, f'B{self.baudrate}', termios.B230400 if hasattr(termios, 'B230400') else termios.B115200)
+                    attrs[4] = speed
+                    attrs[5] = speed
+                    attrs[6][termios.VMIN] = 1
+                    attrs[6][termios.VTIME] = 5
+                    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+                    os.write(fd, b"\xa5\x60")
+                    logger.info(f"[ydlidar] Opened serial port {p} at {self.baudrate} baud via native termios")
+                    return ("native", fd, p)
+                except Exception:
+                    pass
+
+        return None
+
+    def _read_bytes(self, ser_type, ser_obj, count):
+        buf = bytearray()
+        t_start = time.time()
+        while len(buf) < count and self.running and (time.time() - t_start < 0.5):
+            needed = count - len(buf)
+            try:
+                if ser_type == "pyserial":
+                    chunk = ser_obj.read(needed)
+                else:
+                    chunk = os.read(ser_obj, needed)
+                if chunk:
+                    buf.extend(chunk)
+                else:
+                    time.sleep(0.005)
+            except Exception:
+                break
+        return bytes(buf)
+
+    def _serial_loop(self):
+        while self.running:
+            ser_conn = self._open_serial()
+            if not ser_conn:
+                time.sleep(2.0)
+                continue
+
+            ser_type, ser_obj, port_name = ser_conn
+            try:
+                while self.running:
+                    # Sync to header 0xAA 0x55
+                    b1 = self._read_bytes(ser_type, ser_obj, 1)
+                    if b1 != b'\xaa':
+                        continue
+                    b2 = self._read_bytes(ser_type, ser_obj, 1)
+                    if b2 != b'\x55':
+                        continue
+
+                    # Read CT (1 byte) + LSN (1 byte)
+                    hdr = self._read_bytes(ser_type, ser_obj, 2)
+                    if len(hdr) < 2:
+                        continue
+                    ct = hdr[0]
+                    lsn = hdr[1]
+                    if lsn == 0:
+                        continue
+
+                    # Read FSA (2), LSA (2), CS (2)
+                    info = self._read_bytes(ser_type, ser_obj, 6)
+                    if len(info) < 6:
+                        continue
+                    fsa = int.from_bytes(info[0:2], 'little')
+                    lsa = int.from_bytes(info[2:4], 'little')
+
+                    # Read sample points (lsn * 2 bytes)
+                    sample_bytes = self._read_bytes(ser_type, ser_obj, lsn * 2)
+                    if len(sample_bytes) < lsn * 2:
+                        continue
+
+                    angle_fsa = (fsa >> 1) / 64.0
+                    angle_lsa = (lsa >> 1) / 64.0
+                    diff = (angle_lsa - angle_fsa)
+                    if diff < 0:
+                        diff += 360.0
+
+                    now = time.time()
+                    with self.points_lock:
+                        if (ct & 0x01) == 0x01:
+                            # Start of new revolution, clear points older than 0.5s
+                            cutoff = now - 0.5
+                            self.points = {deg: val for deg, val in self.points.items() if val[1] > cutoff}
+
+                        for i in range(lsn):
+                            sample = int.from_bytes(sample_bytes[i*2:i*2+2], 'little')
+                            dist_mm = sample / 4.0
+                            if dist_mm > 40 and dist_mm <= 12000:
+                                dist_m = dist_mm / 1000.0
+                                angle = (angle_fsa + (diff / max(lsn - 1, 1)) * i) % 360.0
+                                self.points[round(angle, 1)] = (dist_m, now)
+                                self.last_hardware_time = now
+                                self.is_hardware = True
+            except Exception as e:
+                logger.info(f"[ydlidar] Serial connection error on {port_name}: {e}")
+            finally:
+                try:
+                    if ser_type == "pyserial":
+                        ser_obj.close()
+                    else:
+                        os.close(ser_obj)
+                except Exception:
+                    pass
+                time.sleep(1.0)
+
+    def render_radar_frame(self):
+        from PIL import Image, ImageDraw
+        img = Image.new('RGB', (self.width, self.height), (11, 15, 25))
+        draw = ImageDraw.Draw(img)
+        cx, cy = self.width // 2, self.height // 2
+        max_range = 8.0
+        scale = (min(self.width, self.height) // 2 - 36) / max_range
+
+        # Concentric distance rings
+        rings = [(1.0, (160, 45, 45), '1m'),
+                 (2.0, (40, 60, 90), '2m'),
+                 (4.0, (40, 60, 90), '4m'),
+                 (6.0, (45, 95, 180), '6m'),
+                 (8.0, (30, 45, 70), '8m')]
+        for r_m, color, label in rings:
+            r_px = r_m * scale
+            draw.ellipse([cx - r_px, cy - r_px, cx + r_px, cy + r_px], outline=color, width=1)
+            draw.text((cx + 6, cy - r_px - 13), label, fill=(140, 170, 200))
+
+        # Crosshairs
+        draw.line([cx, 26, cx, self.height - 30], fill=(26, 42, 64), width=1)
+        draw.line([26, cy, self.width - 26, cy], fill=(26, 42, 64), width=1)
+
+        # Compass directions
+        draw.text((cx - 16, 8), 'N (0°)', fill=(0, 229, 255))
+        draw.text((self.width - 38, cy - 8), '90°', fill=(100, 130, 160))
+        draw.text((cx - 14, self.height - 26), '180°', fill=(100, 130, 160))
+        draw.text((6, cy - 8), '270°', fill=(100, 130, 160))
+
+        # Center robot / node heading indicator
+        draw.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(0, 229, 255), outline=(255, 255, 255))
+        draw.polygon([(cx, cy - 14), (cx - 5, cy - 6), (cx + 5, cy - 6)], fill=(255, 255, 255))
+
+        now = time.time()
+        pt_list = []
+        is_live = False
+        with self.points_lock:
+            if self.is_hardware and (now - self.last_hardware_time < 2.0):
+                pt_list = [(deg, d) for deg, (d, ts) in self.points.items() if now - ts < 0.6]
+                is_live = True
+
+        if not is_live:
+            t = now
+            for deg in range(0, 360):
+                rad = math.radians(deg)
+                wall_x = 4.2 / max(abs(math.cos(rad)), 0.15)
+                wall_y = 3.8 / max(abs(math.sin(rad)), 0.15)
+                d = min(wall_x, wall_y)
+                target_deg = (45 + 30 * math.sin(t * 1.5)) % 360
+                if abs((deg - target_deg + 180) % 360 - 180) < 14:
+                    d = 0.82
+                elif 125 <= deg <= 160:
+                    d = 2.4
+                elif 245 <= deg <= 275:
+                    d = 6.8
+                pt_list.append((deg, d))
+
+        for deg, d in pt_list:
+            if d < 0.05 or d > max_range:
+                continue
+            rad = math.radians(deg)
+            r_px = d * scale
+            px = cx + r_px * math.sin(rad)
+            py = cy - r_px * math.cos(rad)
+            c = self.get_color(d)
+            draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=c)
+
+        # Range Legend
+        bar_y = self.height - 22
+        draw.rectangle([10, bar_y - 4, self.width - 10, self.height - 4], fill=(16, 22, 34))
+        draw.text((16, bar_y), 'RANGE:', fill=(130, 160, 190))
+        legends = [
+            (65, (255, 31, 31), '< 1m (Red)'),
+            (165, (255, 200, 0), '1-2m'),
+            (230, (0, 230, 118), '2-4m'),
+            (300, (0, 229, 255), '4-6m'),
+            (370, (41, 121, 255), '6m+ (Blue)')
+        ]
+        for lx, lc, ltxt in legends:
+            draw.rectangle([lx, bar_y + 2, lx + 12, bar_y + 10], fill=lc)
+            draw.text((lx + 16, bar_y), ltxt, fill=(180, 200, 220))
+
+        status_txt = 'LIVE HARDWARE' if is_live else 'STANDBY / SIMULATION'
+        status_col = (0, 230, 118) if is_live else (255, 190, 0)
+        draw.text((16, 10), 'YDLIDAR T-mini Pro (YDTMP-12) 25ARZ0006', fill=(220, 230, 245))
+        draw.text((16, 26), f'POINTS: {len(pt_list)}  |  {status_txt}', fill=status_col)
+
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=80)
+        return buf.getvalue()
+
+    def get_jpeg_frame(self):
+        now = time.time()
+        min_interval = 1.0 / max(self.fps, 5)
+        if self.latest_jpeg is None or (now - self.last_render_time >= min_interval):
+            try:
+                self.latest_jpeg = self.render_radar_frame()
+                self.last_render_time = now
+            except Exception as e:
+                logger.error(f"[ydlidar] Render frame error: {e}")
+        return self.latest_jpeg
+
+    def stop(self):
+        self.running = False
+
+
 class SensorDriver:
-    """Multi-backend hardware sensor driver (picamera, pygame, opencv, raspistill, fallback)."""
+    """Multi-backend hardware sensor driver (picamera, pygame, opencv, raspistill, ydlidar, fallback)."""
 
     def __init__(self, sensor_cfg):
         self.cfg = sensor_cfg
@@ -106,8 +396,16 @@ class SensorDriver:
         return b"".join(chunks) if len(chunks) > 1 else (chunks[0] if chunks else None)
 
     def _init_hardware(self):
-        # 0. Try rpicam-vid / libcamera-vid (standard on Bookworm/Bullseye for Raspberry Pi Camera v2 / IMX219)
         sensor_type = self.cfg.get("type", "auto")
+
+        # Check for LiDAR sensor
+        if sensor_type in ["ydlidar", "lidar"] or self.modality.lower() in ["depth", "lidar"]:
+            self.lidar_driver = YDLidarDriver(self.cfg)
+            self.backend = "ydlidar"
+            logger.info(f"[{self.sensor_id}] Initialized YDLIDAR driver on {self.lidar_driver.port} ({self.width}x{self.height} @ {self.fps}fps)")
+            return
+
+        # 0. Try rpicam-vid / libcamera-vid (standard on Bookworm/Bullseye for Raspberry Pi Camera v2 / IMX219)
         rpicam_bin = None
         for cand in ["/usr/bin/rpicam-vid", "/usr/bin/libcamera-vid", "rpicam-vid", "libcamera-vid"]:
             if os.path.exists(cand) or (os.name != 'nt' and subprocess.run(["which", cand], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0):
@@ -361,7 +659,10 @@ class SensorDriver:
 
     def get_jpeg_frame(self):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
-        if self.backend in ["v4l2_pipe", "rpicam_pipe"]:
+        if self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
+            return self.lidar_driver.get_jpeg_frame()
+
+        elif self.backend in ["v4l2_pipe", "rpicam_pipe"]:
             jpeg = getattr(self, "latest_jpeg", None)
             if jpeg:
                 return jpeg
@@ -410,7 +711,12 @@ class SensorDriver:
         return self._generate_synthetic_frame()
 
     def release(self):
-        if self.backend == "rpicam_pipe" and getattr(self, "rpicam_proc", None):
+        if self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
+            try:
+                self.lidar_driver.stop()
+            except Exception:
+                pass
+        elif self.backend == "rpicam_pipe" and getattr(self, "rpicam_proc", None):
             self._stop_stream = True
             try:
                 self.rpicam_proc.terminate()
@@ -435,8 +741,6 @@ class SensorDriver:
         elif self.backend == "opencv" and self.camera_obj:
             try:
                 self.camera_obj.release()
-            except Exception:
-                pass
             except Exception:
                 pass
 
@@ -485,13 +789,6 @@ class SensorDriver:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=70)
         return buf.getvalue()
-
-    def release(self):
-        if self.cap is not None:
-            try:
-                self.cap.release()
-            except Exception:
-                pass
 
 
 class CollectionManager:
