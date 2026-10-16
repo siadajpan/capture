@@ -1,12 +1,12 @@
 {
-  "default_hub_url": "https://promises-processor-anyway-dishes.trycloudflare.com",
+  "default_hub_url": "https://fleet.capture.me.uk",
   "fallback_urls": [
+    "https://fleet.capture.me.uk",
     "https://promises-processor-anyway-dishes.trycloudflare.com",
-    "https://pi.capture.me.uk",
     "http://127.0.0.1:8000",
     "http://localhost:8000"
   ],
-  "production_direct_pi_url": "https://pi.capture.me.uk",
+  "production_direct_pi_url": "https://fleet.capture.me.uk",
   "device_poll_interval_ms": 1800,
   "app_version": "1.5.0"
 }
