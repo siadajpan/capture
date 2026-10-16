@@ -1,7 +1,8 @@
 {
-  "default_hub_url": "https://bodies-concept-statistics-labeled.trycloudflare.com",
+  "default_hub_url": "https://promises-processor-anyway-dishes.trycloudflare.com",
   "fallback_urls": [
-    "https://bodies-concept-statistics-labeled.trycloudflare.com",
+    "https://promises-processor-anyway-dishes.trycloudflare.com",
+    "https://pi.capture.me.uk",
     "http://127.0.0.1:8000",
     "http://localhost:8000"
   ],
