@@ -1,11 +1,12 @@
 {
-  "default_hub_url": "https://trembl-adsl-seattle-battery.trycloudflare.com",
+  "default_hub_url": "https://kept-texture-pleased-divisions.trycloudflare.com",
   "fallback_urls": [
+    "https://kept-texture-pleased-divisions.trycloudflare.com",
     "https://trembl-adsl-seattle-battery.trycloudflare.com",
     "http://127.0.0.1:8000",
     "http://localhost:8000"
   ],
   "production_direct_pi_url": "https://pi.capture.me.uk",
   "device_poll_interval_ms": 1800,
-  "app_version": "1.4.1"
+  "app_version": "1.4.2"
 }
