@@ -46,13 +46,21 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       </div>
 
       <div class="nav-right">
-        <!-- Live Video Toggle Pill -->
-        <button id="quickDisplayBtn" class="nav-pill-btn active" type="button" title="Toggle Live Feeds">
+        <!-- Snapshot / Request Latest Frame Pill -->
+        <button id="btnSnapshotAll" class="nav-pill-btn" type="button" title="Request Latest Still Frame (Uses minimal 4G data)">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
           </svg>
-          <span id="quickDisplayLabel">LIVE</span>
+          <span id="snapshotBtnLabel">Snapshot</span>
+        </button>
+
+        <!-- Timed Live Video Toggle Pill -->
+        <button id="quickDisplayBtn" class="nav-pill-btn" type="button" title="Start Timed Live Video Stream (4G Data Saver)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          <span id="quickDisplayLabel">Live (10s)</span>
         </button>
 
         <!-- Recording Pill -->
@@ -149,6 +157,48 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         </div>
       </div>
     </section>
+  <!-- 4G Cellular Data Saver & Timed Live Stream Pop-up Modal -->
+  <div class="modal-backdrop" id="modalDataSaverBackdrop">
+    <div class="modal-card" style="max-width: 460px;">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:1.4rem;">📶</span>
+          <div>
+            <h3 style="margin:0; font-size:1.05rem; font-weight:700;">4G Cellular Data Saver</h3>
+            <p style="margin:2px 0 0; font-size:0.75rem; color:var(--text-muted);">Prevent high mobile data transfer costs</p>
+          </div>
+        </div>
+        <button type="button" class="modal-close-btn" id="closeDataSaverBtn" title="Close dialog">&times;</button>
+      </div>
+
+      <div class="modal-body" style="padding:18px 20px;">
+        <div style="background:rgba(255, 171, 0, 0.12); border:1px solid rgba(255, 171, 0, 0.35); border-radius:8px; padding:12px; margin-bottom:16px;">
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <span style="font-size:1.25rem;">⚠️</span>
+            <div style="font-size:0.8rem; color:var(--text-main); line-height:1.45;">
+              Continuous video streaming over 4G consumes <strong>5–15 MB per minute</strong> per camera.
+              To avoid high carrier costs, live streaming is limited to a chosen preview window, after which it automatically returns to single-frame snapshot mode.
+            </div>
+          </div>
+        </div>
+
+        <label style="font-size:0.82rem; font-weight:600; margin-bottom:8px; display:block; color:var(--text-main);">Select Live Stream Duration:</label>
+        <div class="duration-pills-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;">
+          <button type="button" class="pill data-dur-btn" data-dur="5">5s (Quick Check)</button>
+          <button type="button" class="pill active data-dur-btn" data-dur="10">10s (Default)</button>
+          <button type="button" class="pill data-dur-btn" data-dur="20">20s</button>
+          <button type="button" class="pill data-dur-btn" data-dur="30">30s</button>
+          <button type="button" class="pill data-dur-btn" data-dur="60">60s (1m)</button>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:22px;">
+          <button type="button" class="btn-secondary-action" id="cancelDataSaverBtn" style="padding:8px 16px; font-size:0.85rem;">Cancel</button>
+          <button type="button" class="submit-btn" id="confirmStartStreamBtn" style="padding:8px 18px; font-size:0.85rem; font-weight:700; background:linear-gradient(135deg, #00e5ff, #00b0ff); color:#000;">
+            ▶️ Start 10s Live Stream
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Fleet Management & Hub Settings Modal -->
@@ -385,13 +435,27 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         commonStartTs: 0.0,
         commonEndTs: 0.0,
         commonDuration: 0.0,
-        currentTimeSec: 0.0
+        currentTimeSec: 0.0,
+
+        // 4G Data Saver & Timed Streaming State
+        liveStreamingActive: false,
+        streamTimeRemaining: 0,
+        streamTimerInterval: null,
+        selectedStreamDuration: 10,
+        snapshotTimestamps: {},
+        lastFeedsStructureKey: ''
       };
 
       const el = {
         openMenuBtn: document.getElementById('openMenuBtn'),
+        btnSnapshotAll: document.getElementById('btnSnapshotAll'),
+        snapshotBtnLabel: document.getElementById('snapshotBtnLabel'),
         quickDisplayBtn: document.getElementById('quickDisplayBtn'),
         quickDisplayLabel: document.getElementById('quickDisplayLabel'),
+        modalDataSaverBackdrop: document.getElementById('modalDataSaverBackdrop'),
+        closeDataSaverBtn: document.getElementById('closeDataSaverBtn'),
+        cancelDataSaverBtn: document.getElementById('cancelDataSaverBtn'),
+        confirmStartStreamBtn: document.getElementById('confirmStartStreamBtn'),
         quickRecordBtn: document.getElementById('quickRecordBtn'),
         quickRecordLabel: document.getElementById('quickRecordLabel'),
         menuEdgeBadge: document.getElementById('menuEdgeBadge'),
@@ -501,7 +565,33 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       };
 
       function bindEvents() {
-        if (el.quickDisplayBtn) el.quickDisplayBtn.addEventListener('click', toggleDisplay);
+        if (el.btnSnapshotAll) el.btnSnapshotAll.addEventListener('click', () => window.requestAllSnapshots());
+        if (el.quickDisplayBtn) el.quickDisplayBtn.addEventListener('click', handleLiveStreamBtnClick);
+        if (el.closeDataSaverBtn) el.closeDataSaverBtn.addEventListener('click', closeDataSaverModal);
+        if (el.cancelDataSaverBtn) el.cancelDataSaverBtn.addEventListener('click', closeDataSaverModal);
+        if (el.modalDataSaverBackdrop) {
+          el.modalDataSaverBackdrop.addEventListener('click', (e) => {
+            if (e.target === el.modalDataSaverBackdrop) closeDataSaverModal();
+          });
+        }
+        if (el.confirmStartStreamBtn) {
+          el.confirmStartStreamBtn.addEventListener('click', () => {
+            closeDataSaverModal();
+            startTimedLiveStream(state.selectedStreamDuration || 10);
+          });
+        }
+        document.querySelectorAll('.data-dur-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.data-dur-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const dur = parseInt(btn.dataset.dur, 10) || 10;
+            state.selectedStreamDuration = dur;
+            if (el.confirmStartStreamBtn) {
+              el.confirmStartStreamBtn.textContent = `▶️ Start ${dur}s Live Stream`;
+            }
+          });
+        });
+
         if (el.quickRecordBtn) el.quickRecordBtn.addEventListener('click', toggleCollection);
         if (el.modalCollectBtn) el.modalCollectBtn.addEventListener('click', toggleCollection);
 
@@ -824,31 +914,113 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }
 
         if (el.quickDisplayBtn) {
-          el.quickDisplayBtn.classList.toggle('active', state.displayEnabled);
+          el.quickDisplayBtn.classList.toggle('live-streaming', state.liveStreamingActive);
         }
         if (el.quickDisplayLabel) {
-          el.quickDisplayLabel.textContent = state.displayEnabled ? 'LIVE' : 'OFF';
+          if (state.liveStreamingActive) {
+            el.quickDisplayLabel.textContent = `LIVE (${state.streamTimeRemaining}s)`;
+          } else {
+            el.quickDisplayLabel.textContent = `Live (${state.selectedStreamDuration || 10}s)`;
+          }
         }
       }
 
-      async function toggleDisplay() {
-        const newState = !state.displayEnabled;
-        try {
-          const res = await fetch(`${hubBaseUrl}/api/display/toggle`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: newState })
-          });
-          if (res.ok) {
-            const d = await res.json();
-            state.displayEnabled = d.display_enabled;
-            updateHUD();
-            renderFeeds();
-          }
-        } catch (e) {
-          console.error(e);
+      function handleLiveStreamBtnClick() {
+        if (state.liveStreamingActive) {
+          stopTimedLiveStream();
+        } else {
+          openDataSaverModal();
         }
       }
+
+      function openDataSaverModal() {
+        if (el.modalDataSaverBackdrop) {
+          el.modalDataSaverBackdrop.classList.add('open');
+        }
+      }
+
+      function closeDataSaverModal() {
+        if (el.modalDataSaverBackdrop) {
+          el.modalDataSaverBackdrop.classList.remove('open');
+        }
+      }
+
+      function startTimedLiveStream(durationSec) {
+        if (state.streamTimerInterval) clearInterval(state.streamTimerInterval);
+        state.liveStreamingActive = true;
+        state.streamTimeRemaining = durationSec || 10;
+
+        if (el.quickDisplayBtn) el.quickDisplayBtn.classList.add('live-streaming');
+        if (el.quickDisplayLabel) el.quickDisplayLabel.textContent = `LIVE (${state.streamTimeRemaining}s)`;
+
+        updateSensorFeedSources();
+
+        state.streamTimerInterval = setInterval(() => {
+          state.streamTimeRemaining--;
+          if (state.streamTimeRemaining <= 0) {
+            stopTimedLiveStream();
+          } else {
+            if (el.quickDisplayLabel) el.quickDisplayLabel.textContent = `LIVE (${state.streamTimeRemaining}s)`;
+            document.querySelectorAll('.live-stream-badge-overlay span:last-child').forEach(s => {
+              s.textContent = `LIVE (${state.streamTimeRemaining}s)`;
+            });
+          }
+        }, 1000);
+      }
+
+      function stopTimedLiveStream() {
+        if (state.streamTimerInterval) {
+          clearInterval(state.streamTimerInterval);
+          state.streamTimerInterval = null;
+        }
+        state.liveStreamingActive = false;
+        state.streamTimeRemaining = 0;
+
+        if (el.quickDisplayBtn) el.quickDisplayBtn.classList.remove('live-streaming');
+        if (el.quickDisplayLabel) el.quickDisplayLabel.textContent = `Live (${state.selectedStreamDuration || 10}s)`;
+
+        updateSensorFeedSources();
+      }
+
+      window.requestAllSnapshots = async function () {
+        if (el.snapshotBtnLabel) el.snapshotBtnLabel.textContent = 'Fetching...';
+        const now = Date.now();
+        state.edges.forEach(edge => {
+          if (!edge.online) return;
+          (edge.sensors || []).forEach(sensor => {
+            const target = sensor.id || sensor.modality;
+            const fKey = `${edge.device_id}:${target}`;
+            state.snapshotTimestamps[fKey] = now;
+            const img = document.getElementById(`feed-img-${edge.device_id}-${target}`);
+            if (img && !state.liveStreamingActive) {
+              img.src = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}?t=${now}`;
+            }
+            const tsSpan = document.getElementById(`ts-${edge.device_id}-${target}`);
+            if (tsSpan) {
+              const timeStr = new Date().toLocaleTimeString();
+              tsSpan.textContent = `Snapshot: ${timeStr}`;
+            }
+          });
+        });
+        setTimeout(() => {
+          if (el.snapshotBtnLabel) el.snapshotBtnLabel.textContent = 'Snapshot';
+        }, 800);
+      };
+
+      window.requestSensorSnapshot = async function (deviceId, target) {
+        const now = Date.now();
+        const fKey = `${deviceId}:${target}`;
+        state.snapshotTimestamps[fKey] = now;
+        const img = document.getElementById(`feed-img-${deviceId}-${target}`);
+        if (img && !state.liveStreamingActive) {
+          img.src = `${hubBaseUrl}/proxy/snapshot/${deviceId}/${target}?t=${now}`;
+        }
+        const tsSpan = document.getElementById(`ts-${deviceId}-${target}`);
+        if (tsSpan) {
+          const timeStr = new Date().toLocaleTimeString();
+          tsSpan.textContent = `Snapshot: ${timeStr}`;
+        }
+      };
 
       async function toggleCollection() {
         const endpoint = state.isRecording ? '/api/collection/stop' : '/api/collection/start';
@@ -1548,14 +1720,86 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               <button class="submit-btn" onclick="window.switchModalTab('add'); el.modalBackdrop.classList.add('open');">+ Add Edge Device</button>
             </div>
           `;
+          state.lastFeedsStructureKey = '';
           return;
         }
 
+        const structureKey = state.edges.map(e => `${e.device_id}:${e.online}:${(e.sensors || []).map(s => s.id).join(',')}`).join('|') + `|${state.viewMode}|${state.selectedModalityFilter}`;
+
+        if (state.lastFeedsStructureKey === structureKey) {
+          updateFeedTelemetryInPlace();
+          return;
+        }
+
+        state.lastFeedsStructureKey = structureKey;
         if (state.viewMode === 'device') {
           renderByDevice();
         } else {
           renderByModality();
         }
+      }
+
+      function updateFeedTelemetryInPlace() {
+        state.edges.forEach(edge => {
+          const col = edge.collection || {};
+          const isRec = col.is_recording;
+          const card = document.getElementById(`card-${edge.device_id}`);
+          if (card) {
+            const ind = card.querySelector('.status-indicator');
+            if (ind) ind.className = `status-indicator ${edge.online ? '' : 'offline'}`;
+            const telem = card.querySelector('.device-telemetry');
+            if (telem) {
+              const freeGb = col.disk_free_gb !== undefined ? `${col.disk_free_gb} GB` : 'Ready';
+              telem.innerHTML = `
+                ${isRec ? `<span class="rec-pulse-chip">⏺ ${col.duration_seconds || 0}s</span>` : ''}
+                <span class="storage-badge" title="SD Free: ${freeGb}">💾 ${freeGb}</span>
+              `;
+            }
+          }
+          (edge.sensors || []).forEach(sensor => {
+            const feedBox = document.getElementById(`sensor-${edge.device_id}-${sensor.id}`);
+            if (feedBox) {
+              const footerSpan = feedBox.querySelector('.feed-footer span:last-child');
+              if (footerSpan) {
+                const frameCount = (col.frame_counts && col.frame_counts[sensor.id]) || 0;
+                footerSpan.innerHTML = isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY';
+              }
+            }
+          });
+        });
+      }
+
+      function updateSensorFeedSources() {
+        state.edges.forEach(edge => {
+          if (!edge.online) return;
+          (edge.sensors || []).forEach(sensor => {
+            const target = sensor.id || sensor.modality;
+            const fKey = `${edge.device_id}:${target}`;
+            const img = document.getElementById(`feed-img-${edge.device_id}-${target}`);
+            const badge = document.getElementById(`badge-${edge.device_id}-${target}`);
+            const tsSpan = document.getElementById(`ts-${edge.device_id}-${target}`);
+
+            if (state.liveStreamingActive) {
+              const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
+              if (img) img.src = streamUrl;
+              if (badge) {
+                badge.className = 'live-stream-badge-overlay';
+                badge.innerHTML = `<span class="live-pulse-dot"></span><span>LIVE (${state.streamTimeRemaining}s)</span>`;
+              }
+              if (tsSpan) tsSpan.textContent = `${sensor.fps || 15} fps (Live)`;
+            } else {
+              const ts = state.snapshotTimestamps[fKey] || Date.now();
+              state.snapshotTimestamps[fKey] = ts;
+              const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}?t=${ts}`;
+              if (img) img.src = snapshotUrl;
+              if (badge) {
+                badge.className = 'snapshot-badge-overlay';
+                badge.innerHTML = `<span>📷 Last Frame</span>`;
+              }
+              if (tsSpan) tsSpan.textContent = 'Last Frame';
+            }
+          });
+        });
       }
 
       function renderByDevice() {
@@ -1637,7 +1881,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       }
 
       function renderSensorBox(edge, sensor, showDeviceTag = false) {
-        const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${sensor.id || sensor.modality}`;
+        const target = sensor.id || sensor.modality;
+        const fKey = `${edge.device_id}:${target}`;
+        const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
+        const ts = state.snapshotTimestamps[fKey] || 0;
+        const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}${ts ? `?t=${ts}` : ''}`;
+        const currentSrc = state.liveStreamingActive ? streamUrl : snapshotUrl;
+
         const mod = (sensor.modality || 'rgb').toLowerCase();
         const isRec = edge.collection && edge.collection.is_recording;
         const frameCount = (edge.collection && edge.collection.frame_counts && edge.collection.frame_counts[sensor.id]) || 0;
@@ -1649,25 +1899,38 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 <span class="feed-modality-badge modality-${mod}">${mod}</span>
                 <span class="feed-name" title="${escapeHtml(sensor.name || sensor.id)}">${escapeHtml(sensor.name || sensor.id)}</span>
               </div>
-              ${showDeviceTag ? `<span class="device-id-tag" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
+              <div style="display:flex; align-items:center; gap:6px;">
+                <button type="button" class="card-action-btn" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}')" title="Fetch fresh still frame (low data)">📷 Frame</button>
+                ${showDeviceTag ? `<span class="device-id-tag" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
+              </div>
             </div>
 
             <div class="feed-screen">
-              ${state.displayEnabled && edge.online ? `
-                <img src="${streamUrl}" alt="${sensor.name}" loading="lazy">
+              ${edge.online ? `
+                <img src="${currentSrc}" alt="${sensor.name}" id="feed-img-${edge.device_id}-${target}" loading="lazy">
+                <div class="${state.liveStreamingActive ? 'live-stream-badge-overlay' : 'snapshot-badge-overlay'}" id="badge-${edge.device_id}-${target}">
+                  ${state.liveStreamingActive ? `
+                    <span class="live-pulse-dot"></span>
+                    <span>LIVE (${state.streamTimeRemaining}s)</span>
+                  ` : `
+                    <span>📷 Last Frame</span>
+                  `}
+                </div>
               ` : `
                 <div class="display-off-overlay">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
                     <line x1="1" y1="1" x2="23" y2="23"></line>
                   </svg>
-                  <span>${!edge.online ? 'Edge Offline' : 'Display Off'}</span>
+                  <span>Edge Offline</span>
                 </div>
               `}
             </div>
 
             <div class="feed-footer">
-              <span>${sensor.resolution || '640x480'} @ ${sensor.fps || 15}fps</span>
+              <span id="ts-${edge.device_id}-${target}">
+                ${state.liveStreamingActive ? `${sensor.fps || 15} fps (Live)` : (state.snapshotTimestamps[fKey] ? 'Updated' : 'Last Frame')}
+              </span>
               <span>${isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY'}</span>
             </div>
           </div>
