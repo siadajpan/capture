@@ -543,6 +543,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         await fetchSystemInfo();
         await pollData();
         state.pollTimer = setInterval(pollData, 10000);
+        setInterval(updateRelativeTimestamps, 1000);
       }
 
       async function fetchSystemInfo() {
@@ -1016,6 +1017,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         state.liveStreamingActive = false;
         state.streamTimeRemaining = 0;
 
+        const now = Date.now();
+        state.edges.forEach(edge => {
+          (edge.sensors || []).forEach(sensor => {
+            const target = sensor.id || sensor.modality;
+            state.snapshotTimestamps[`${edge.device_id}:${target}`] = now;
+          });
+        });
+
         if (el.quickDisplayBtn) el.quickDisplayBtn.classList.remove('live-streaming');
         if (el.quickDisplayLabel) el.quickDisplayLabel.textContent = `Live (${state.selectedStreamDuration || 10}s)`;
 
@@ -1035,13 +1044,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             if (img && !state.liveStreamingActive) {
               img.src = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}?t=${now}`;
             }
-            const tsSpan = document.getElementById(`ts-${edge.device_id}-${target}`);
-            if (tsSpan) {
-              const timeStr = new Date().toLocaleTimeString();
-              tsSpan.textContent = `Snapshot: ${timeStr}`;
-            }
           });
         });
+        updateRelativeTimestamps();
         setTimeout(() => {
           if (el.snapshotBtnLabel) el.snapshotBtnLabel.textContent = 'Snapshot';
         }, 800);
@@ -1055,11 +1060,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         if (img && !state.liveStreamingActive) {
           img.src = `${hubBaseUrl}/proxy/snapshot/${deviceId}/${target}?t=${now}`;
         }
-        const tsSpan = document.getElementById(`ts-${deviceId}-${target}`);
-        if (tsSpan) {
-          const timeStr = new Date().toLocaleTimeString();
-          tsSpan.textContent = `Snapshot: ${timeStr}`;
-        }
+        updateRelativeTimestamps();
       };
 
       async function toggleCollection() {
@@ -1832,11 +1833,15 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               state.snapshotTimestamps[fKey] = ts;
               const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}?t=${ts}`;
               if (img) img.src = snapshotUrl;
+              const ageStr = formatFrameAge(ts);
               if (badge) {
                 badge.className = 'snapshot-badge-overlay';
-                badge.innerHTML = `<span>📷 Last Frame</span>`;
+                badge.innerHTML = `<span>📷 ${ageStr}</span>`;
               }
-              if (tsSpan) tsSpan.textContent = 'Last Frame';
+              if (tsSpan) {
+                tsSpan.textContent = `📷 ${ageStr}`;
+                tsSpan.title = 'Captured: ' + new Date(ts).toLocaleTimeString();
+              }
             }
           });
         });
@@ -1931,9 +1936,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         const target = sensor.id || sensor.modality;
         const fKey = `${edge.device_id}:${target}`;
         const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
-        const ts = state.snapshotTimestamps[fKey] || 0;
+        const ts = state.snapshotTimestamps[fKey] || (state.snapshotTimestamps[fKey] = Date.now());
         const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}${ts ? `?t=${ts}` : ''}`;
         const currentSrc = state.liveStreamingActive ? streamUrl : snapshotUrl;
+        const frameAge = formatFrameAge(ts);
 
         const mod = (sensor.modality || 'rgb').toLowerCase();
         const isRec = edge.collection && edge.collection.is_recording;
@@ -1968,7 +1974,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                     <span class="live-pulse-dot"></span>
                     <span>LIVE (${state.streamTimeRemaining}s)</span>
                   ` : `
-                    <span>📷 Last Frame</span>
+                    <span>📷 ${frameAge}</span>
                   `}
                 </div>
               ` : `
@@ -1983,13 +1989,51 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             </div>
 
             <div class="feed-footer">
-              <span id="ts-${edge.device_id}-${target}">
-                ${state.liveStreamingActive ? `${sensor.fps || 15} fps (Live)` : (state.snapshotTimestamps[fKey] ? 'Updated' : 'Last Frame')}
+              <span id="ts-${edge.device_id}-${target}" title="${ts ? 'Captured at: ' + new Date(ts).toLocaleTimeString() : ''}">
+                ${state.liveStreamingActive ? `${sensor.fps || 15} fps (Live)` : `📷 ${frameAge}`}
               </span>
               <span>${isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY'}</span>
             </div>
           </div>
         `;
+      }
+
+      function formatFrameAge(ts) {
+        if (!ts) return 'Just now';
+        const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+        if (diffSec < 2) return 'Just now';
+        if (diffSec < 60) return `${diffSec}s ago`;
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return `${diffMin}m ago`;
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return `${diffHr}h+ ago`;
+        const diffDays = Math.floor(diffHr / 24);
+        return `${diffDays}d+ ago`;
+      }
+
+      function updateRelativeTimestamps() {
+        if (state.liveStreamingActive) return;
+        state.edges.forEach(edge => {
+          (edge.sensors || []).forEach(sensor => {
+            const target = sensor.id || sensor.modality;
+            const fKey = `${edge.device_id}:${target}`;
+            const ts = state.snapshotTimestamps[fKey];
+            if (!ts) return;
+            const ageStr = formatFrameAge(ts);
+
+            const badge = document.getElementById(`badge-${edge.device_id}-${target}`);
+            if (badge && !state.liveStreamingActive) {
+              badge.className = 'snapshot-badge-overlay';
+              badge.innerHTML = `<span>📷 ${ageStr}</span>`;
+            }
+
+            const tsSpan = document.getElementById(`ts-${edge.device_id}-${target}`);
+            if (tsSpan && !state.liveStreamingActive) {
+              tsSpan.textContent = `📷 ${ageStr}`;
+              tsSpan.title = 'Captured: ' + new Date(ts).toLocaleTimeString();
+            }
+          });
+        });
       }
 
       function timeAgo(ts) {
