@@ -29,6 +29,8 @@ import subprocess
 from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 import io
 
 # Setup logging
@@ -1049,12 +1051,22 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._handle_edges()
         elif path.startswith("/proxy/stream/"):
             parts = [p for p in path.split("/proxy/stream/")[1].split("/") if p]
-            target = parts[-1] if parts else "rgb"
-            self._handle_mjpeg_stream(target)
+            dev_id = parts[0] if len(parts) >= 2 else None
+            target = parts[1] if len(parts) >= 2 else (parts[0] if parts else "rgb")
+            my_id = self.daemon_ref.config.get("device_id")
+            if dev_id and dev_id != my_id and dev_id in self.daemon_ref.peer_ips:
+                self._proxy_peer_stream(f"/proxy/stream/{dev_id}/{target}", dev_id)
+            else:
+                self._handle_mjpeg_stream(target)
         elif path.startswith("/proxy/snapshot/"):
             parts = [p for p in path.split("/proxy/snapshot/")[1].split("/") if p]
-            target = parts[-1] if parts else "rgb"
-            self._handle_snapshot(target)
+            dev_id = parts[0] if len(parts) >= 2 else None
+            target = parts[1] if len(parts) >= 2 else (parts[0] if parts else "rgb")
+            my_id = self.daemon_ref.config.get("device_id")
+            if dev_id and dev_id != my_id and dev_id in self.daemon_ref.peer_ips:
+                self._proxy_peer_request(f"/proxy/snapshot/{dev_id}/{target}", dev_id)
+            else:
+                self._handle_snapshot(target)
         elif path.startswith("/api/stream/"):
             # Stream path: /api/stream/<modality> or /api/stream/<sensor_id>
             target = path.split("/api/stream/")[1]
@@ -1064,11 +1076,13 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._handle_snapshot(target)
         elif path == "/api/collection/start":
             res = self.daemon_ref.collector.start_collection()
+            self.daemon_ref.broadcast_to_peers("/api/collection/start", b"{}")
             self._send_json(res)
         elif path == "/api/collection/stop":
             res = self.daemon_ref.collector.stop_collection()
+            self.daemon_ref.broadcast_to_peers("/api/collection/stop", b"{}")
             self._send_json(res)
-        elif path == "/api/sessions":
+        elif path == "/api/sessions" or path == "/api/recordings/sessions":
             self._handle_list_sessions()
         elif path.startswith("/api/session/"):
             self._handle_session_detail(path)
@@ -1090,6 +1104,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         if path == "/api/collection/start":
             content_length = int(self.headers.get('Content-Length', 0))
             label = None
+            body = b""
             if content_length > 0:
                 body = self.rfile.read(content_length)
                 try:
@@ -1098,9 +1113,11 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             res = self.daemon_ref.collector.start_collection(session_label=label)
+            self.daemon_ref.broadcast_to_peers("/api/collection/start", body or b"{}")
             self._send_json(res)
         elif path == "/api/collection/stop":
             res = self.daemon_ref.collector.stop_collection()
+            self.daemon_ref.broadcast_to_peers("/api/collection/stop", b"{}")
             self._send_json(res)
         elif path == "/api/display/toggle":
             self._send_json({"display_enabled": True})
@@ -1125,6 +1142,53 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "Not Found")
 
+    def _proxy_peer_request(self, rel_path, dev_id):
+        peer_ip = self.daemon_ref.peer_ips.get(dev_id)
+        if not peer_ip:
+            self.send_error(404, f"Peer {dev_id} not reachable")
+            return
+        url = f"http://{peer_ip}:5001{rel_path}"
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                content = resp.read()
+                self.send_response(resp.status)
+                for h in ["Content-Type", "Content-Length"]:
+                    val = resp.headers.get(h)
+                    if val:
+                        self.send_header(h, val)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.end_headers()
+                self.wfile.write(content)
+        except Exception as e:
+            self.send_error(502, f"Peer Gateway Error: {e}")
+
+    def _proxy_peer_stream(self, rel_path, dev_id):
+        peer_ip = self.daemon_ref.peer_ips.get(dev_id)
+        if not peer_ip:
+            self.send_error(404, f"Peer {dev_id} not reachable")
+            return
+        url = f"http://{peer_ip}:5001{rel_path}"
+        try:
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                self.send_response(200)
+                self.send_header("Content-Type", resp.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=frame"))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.send_header("Cache-Control", "no-cache, private")
+                self.end_headers()
+                while True:
+                    chunk = resp.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except Exception as e:
+            self.send_error(502, f"Peer Stream Error: {e}")
+
     def _send_json(self, data, status_code=200):
         body = json.dumps(data, indent=2).encode('utf-8')
         self.send_response(status_code)
@@ -1147,20 +1211,27 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             }
             for s in self.daemon_ref.sensors
         ]
+        local_edge = {
+            "device_id": self.daemon_ref.config.get("device_id", "edge-pi-zero-01"),
+            "device_name": self.daemon_ref.config.get("device_name", "Raspberry Pi Zero (STEVAL-55G0MBI)"),
+            "host": self.daemon_ref.config.get("host", "0.0.0.0"),
+            "port": int(self.daemon_ref.config.get("port", 5001)),
+            "online": True,
+            "last_seen": time.time(),
+            "network": self.daemon_ref.get_network_info(),
+            "sensors": sensor_info,
+            "modalities": list(set(s.modality for s in self.daemon_ref.sensors)),
+            "collection": self.daemon_ref.collector.get_status()
+        }
+        all_edges = [local_edge]
+        now = time.time()
+        for p_id, p_edge in list(self.daemon_ref.peer_edges.items()):
+            if p_id != local_edge["device_id"] and (now - p_edge.get("last_seen", 0)) < 15.0:
+                all_edges.append(p_edge)
+
         edges_data = {
             "display_enabled": True,
-            "edges": [{
-                "device_id": self.daemon_ref.config.get("device_id", "edge-pi-zero-01"),
-                "device_name": self.daemon_ref.config.get("device_name", "Raspberry Pi Zero (STEVAL-55G0MBI)"),
-                "host": self.daemon_ref.config.get("host", "0.0.0.0"),
-                "port": int(self.daemon_ref.config.get("port", 5001)),
-                "online": True,
-                "last_seen": time.time(),
-                "network": self.daemon_ref.get_network_info(),
-                "sensors": sensor_info,
-                "modalities": list(set(s.modality for s in self.daemon_ref.sensors)),
-                "collection": self.daemon_ref.collector.get_status()
-            }]
+            "edges": all_edges
         }
         self._send_json(edges_data)
 
@@ -1400,6 +1471,65 @@ class EdgeDaemon:
             storage_root=self.config.get("storage_root", "/home/pi/edge_data"),
             sensors=self.sensors
         )
+        self.running = True
+        self.peer_edges = {}
+        self.peer_ips = {}
+        self._peer_thread = threading.Thread(target=self._peer_scanner_loop, daemon=True)
+        self._peer_thread.start()
+
+    def broadcast_to_peers(self, endpoint, payload_bytes):
+        for dev_id, ip in list(self.peer_ips.items()):
+            try:
+                url = f"http://{ip}:5001{endpoint}"
+                req = urllib.request.Request(url, data=payload_bytes, headers={"Content-Type": "application/json"}, method="POST")
+                urllib.request.urlopen(req, timeout=1.5)
+            except Exception as e:
+                logger.warning(f"Failed to broadcast {endpoint} to {dev_id} ({ip}): {e}")
+
+    def _peer_scanner_loop(self):
+        candidate_ips = [
+            "192.168.137.201", "192.168.137.203", "192.168.137.204", "192.168.137.35",
+            "192.168.4.201", "192.168.4.203", "192.168.4.204", "192.168.4.35",
+            "10.42.0.201", "10.42.0.203", "10.42.0.204", "10.42.0.35"
+        ]
+        my_id = self.config.get("device_id")
+
+        def check_peer(ip):
+            try:
+                url = f"http://{ip}:5001/api/status"
+                req = urllib.request.Request(url, headers={"User-Agent": "FleetScanner"})
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode())
+                        dev_id = data.get("device_id")
+                        if dev_id and dev_id != my_id:
+                            return (dev_id, ip, {
+                                "device_id": dev_id,
+                                "device_name": data.get("device_name", dev_id),
+                                "host": ip,
+                                "port": 5001,
+                                "online": True,
+                                "last_seen": time.time(),
+                                "network": data.get("network", {}),
+                                "sensors": data.get("sensors", []),
+                                "modalities": data.get("modalities", []),
+                                "collection": data.get("collection", {})
+                            })
+            except Exception:
+                pass
+            return None
+
+        while self.running:
+            try:
+                with ThreadPoolExecutor(max_workers=min(len(candidate_ips), 8)) as pool:
+                    for res in pool.map(check_peer, candidate_ips):
+                        if res:
+                            dev_id, ip, edge_data = res
+                            self.peer_ips[dev_id] = ip
+                            self.peer_edges[dev_id] = edge_data
+            except Exception as e:
+                logger.debug(f"Peer scan error: {e}")
+            time.sleep(2.5)
 
     def find_sensor(self, target):
         # Match by id or modality
