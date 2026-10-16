@@ -1487,18 +1487,47 @@ class EdgeDaemon:
                 logger.warning(f"Failed to broadcast {endpoint} to {dev_id} ({ip}): {e}")
 
     def _peer_scanner_loop(self):
-        candidate_ips = [
-            "192.168.137.201", "192.168.137.203", "192.168.137.204", "192.168.137.35",
-            "192.168.4.201", "192.168.4.203", "192.168.4.204", "192.168.4.35",
-            "10.42.0.201", "10.42.0.203", "10.42.0.204", "10.42.0.35"
-        ]
         my_id = self.config.get("device_id")
+
+        def get_candidates():
+            candidates = set([
+                "192.168.137.201", "192.168.137.203", "192.168.137.204", "192.168.137.35",
+                "192.168.4.1", "192.168.4.201", "192.168.4.203", "192.168.4.204", "192.168.4.35",
+                "10.42.0.1", "10.42.0.201", "10.42.0.203", "10.42.0.204", "10.42.0.35"
+            ])
+            # 1. Check dnsmasq leases if hotspot master
+            for lease_file in ["/var/lib/misc/dnsmasq.leases", "/tmp/dnsmasq.leases", "/var/lib/dnsmasq/dnsmasq.leases"]:
+                if os.path.exists(lease_file):
+                    try:
+                        with open(lease_file, "r") as f:
+                            for line in f:
+                                parts = line.split()
+                                if len(parts) >= 3 and parts[2].startswith("192.168.4."):
+                                    candidates.add(parts[2])
+                    except Exception:
+                        pass
+            # 2. Check ARP table
+            if os.path.exists("/proc/net/arp"):
+                try:
+                    with open("/proc/net/arp", "r") as f:
+                        for line in f:
+                            parts = line.split()
+                            if len(parts) >= 4 and parts[0] != "IP" and parts[3] != "00:00:00:00:00:00":
+                                ip = parts[0]
+                                if ip.startswith("192.168.137.") or ip.startswith("192.168.4.") or ip.startswith("10.42.0."):
+                                    candidates.add(ip)
+                except Exception:
+                    pass
+            # 3. Add dynamic hotspot pool IPs
+            for i in range(10, 30):
+                candidates.add(f"192.168.4.{i}")
+            return list(candidates)
 
         def check_peer(ip):
             try:
                 url = f"http://{ip}:5001/api/status"
                 req = urllib.request.Request(url, headers={"User-Agent": "FleetScanner"})
-                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                with urllib.request.urlopen(req, timeout=1.5) as resp:
                     if resp.status == 200:
                         data = json.loads(resp.read().decode())
                         dev_id = data.get("device_id")
@@ -1521,7 +1550,8 @@ class EdgeDaemon:
 
         while self.running:
             try:
-                with ThreadPoolExecutor(max_workers=min(len(candidate_ips), 8)) as pool:
+                candidate_ips = get_candidates()
+                with ThreadPoolExecutor(max_workers=min(len(candidate_ips), 12)) as pool:
                     for res in pool.map(check_peer, candidate_ips):
                         if res:
                             dev_id, ip, edge_data = res
