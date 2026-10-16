@@ -1836,10 +1836,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               const ageStr = formatFrameAge(ts);
               if (badge) {
                 badge.className = 'snapshot-badge-overlay';
-                badge.innerHTML = `<span>📷 ${ageStr}</span>`;
+                badge.innerHTML = `<span>${ageStr}</span>`;
               }
               if (tsSpan) {
-                tsSpan.textContent = `📷 ${ageStr}`;
+                tsSpan.textContent = ageStr;
                 tsSpan.title = 'Captured: ' + new Date(ts).toLocaleTimeString();
               }
             }
@@ -1959,14 +1959,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 <span class="feed-modality-badge modality-${mod}">${mod}</span>
                 <span class="feed-name" title="${escapeHtml(sensor.name || sensor.id)}">${escapeHtml(sensor.name || sensor.id)}</span>
               </div>
-              <div style="display:flex; align-items:center; gap:6px;">
-                <button type="button" class="card-action-btn" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}')" title="Fetch fresh still frame (low data)">📷 Frame</button>
+              <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                 ${pingChip}
-                ${showDeviceTag ? `<span class="device-id-tag" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
+                <span class="device-id-tag" title="${escapeHtml(edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>
               </div>
             </div>
 
-            <div class="feed-screen">
+            <div class="feed-screen" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}')" style="cursor:pointer;" title="Click to refresh frame">
               ${edge.online ? `
                 <img src="${currentSrc}" alt="${sensor.name}" id="feed-img-${edge.device_id}-${target}" loading="lazy">
                 <div class="${state.liveStreamingActive ? 'live-stream-badge-overlay' : 'snapshot-badge-overlay'}" id="badge-${edge.device_id}-${target}">
@@ -1974,7 +1973,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                     <span class="live-pulse-dot"></span>
                     <span>LIVE (${state.streamTimeRemaining}s)</span>
                   ` : `
-                    <span>📷 ${frameAge}</span>
+                    <span>${frameAge}</span>
                   `}
                 </div>
               ` : `
@@ -1990,7 +1989,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
             <div class="feed-footer">
               <span id="ts-${edge.device_id}-${target}" title="${ts ? 'Captured at: ' + new Date(ts).toLocaleTimeString() : ''}">
-                ${state.liveStreamingActive ? `${sensor.fps || 15} fps (Live)` : `📷 ${frameAge}`}
+                ${state.liveStreamingActive ? `${sensor.fps || 15} fps (Live)` : frameAge}
               </span>
               <span>${isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY'}</span>
             </div>
@@ -2024,12 +2023,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             const badge = document.getElementById(`badge-${edge.device_id}-${target}`);
             if (badge && !state.liveStreamingActive) {
               badge.className = 'snapshot-badge-overlay';
-              badge.innerHTML = `<span>📷 ${ageStr}</span>`;
+              badge.innerHTML = `<span>${ageStr}</span>`;
             }
 
             const tsSpan = document.getElementById(`ts-${edge.device_id}-${target}`);
             if (tsSpan && !state.liveStreamingActive) {
-              tsSpan.textContent = `📷 ${ageStr}`;
+              tsSpan.textContent = ageStr;
               tsSpan.title = 'Captured: ' + new Date(ts).toLocaleTimeString();
             }
           });
