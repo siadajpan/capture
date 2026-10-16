@@ -1,7 +1,7 @@
 {
-  "default_hub_url": "https://marvel-reconstruction-atm-planning.trycloudflare.com",
+  "default_hub_url": "https://lucy-disclosure-athletes-unable.trycloudflare.com",
   "fallback_urls": [
-    "https://marvel-reconstruction-atm-planning.trycloudflare.com",
+    "https://lucy-disclosure-athletes-unable.trycloudflare.com",
     "http://127.0.0.1:8000",
     "http://localhost:8000"
   ],
