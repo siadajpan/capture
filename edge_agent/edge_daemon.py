@@ -1217,6 +1217,9 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             "host": self.daemon_ref.config.get("host", "0.0.0.0"),
             "port": int(self.daemon_ref.config.get("port", 5001)),
             "online": True,
+            "is_gateway": True,
+            "ping_ms": 0.0,
+            "link_status": "gateway",
             "last_seen": time.time(),
             "network": self.daemon_ref.get_network_info(),
             "sensors": sensor_info,
@@ -1226,11 +1229,27 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         all_edges = [local_edge]
         now = time.time()
         for p_id, p_edge in list(self.daemon_ref.peer_edges.items()):
-            if p_id != local_edge["device_id"] and (now - p_edge.get("last_seen", 0)) < 15.0:
-                all_edges.append(p_edge)
+            if p_id != local_edge["device_id"]:
+                edge_copy = dict(p_edge)
+                time_diff = now - p_edge.get("last_seen", 0)
+                edge_copy["last_seen_ago_s"] = int(time_diff)
+                # If seen within last 45s, mark online
+                if time_diff < 45.0:
+                    edge_copy["online"] = True
+                    p_ms = edge_copy.get("ping_ms", 20.0)
+                    edge_copy["link_status"] = "excellent" if p_ms < 45 else ("good" if p_ms < 100 else "slow")
+                else:
+                    edge_copy["online"] = False
+                    edge_copy["link_status"] = "offline"
+                
+                # Keep in edge list for up to 10 minutes so feeds don't vanish suddenly
+                if time_diff < 600.0:
+                    all_edges.append(edge_copy)
 
         edges_data = {
             "display_enabled": True,
+            "gateway_device_id": local_edge["device_id"],
+            "timestamp": now,
             "edges": all_edges
         }
         self._send_json(edges_data)
@@ -1524,11 +1543,13 @@ class EdgeDaemon:
             return list(candidates)
 
         def check_peer(ip):
+            t0 = time.time()
             try:
                 url = f"http://{ip}:5001/api/status"
                 req = urllib.request.Request(url, headers={"User-Agent": "FleetScanner"})
-                with urllib.request.urlopen(req, timeout=1.5) as resp:
+                with urllib.request.urlopen(req, timeout=1.8) as resp:
                     if resp.status == 200:
+                        elapsed_ms = round((time.time() - t0) * 1000, 1)
                         data = json.loads(resp.read().decode())
                         dev_id = data.get("device_id")
                         if dev_id and dev_id != my_id:
@@ -1538,6 +1559,8 @@ class EdgeDaemon:
                                 "host": ip,
                                 "port": 5001,
                                 "online": True,
+                                "ping_ms": elapsed_ms,
+                                "link_status": "excellent" if elapsed_ms < 45 else ("good" if elapsed_ms < 100 else "slow"),
                                 "last_seen": time.time(),
                                 "network": data.get("network", {}),
                                 "sensors": data.get("sensors", []),
@@ -1559,7 +1582,7 @@ class EdgeDaemon:
                             self.peer_edges[dev_id] = edge_data
             except Exception as e:
                 logger.debug(f"Peer scan error: {e}")
-            time.sleep(2.5)
+            time.sleep(10.0)
 
     def find_sensor(self, target):
         # Match by id or modality

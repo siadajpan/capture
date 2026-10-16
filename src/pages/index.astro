@@ -46,6 +46,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       </div>
 
       <div class="nav-right">
+        <!-- Fleet Latency & Link Health Pill -->
+        <div id="fleetHealthPill" class="fleet-health-pill" title="Fleet connection latency & ping health">
+          <span class="ping-dot"></span>
+          <span id="fleetHealthText">📶 Syncing...</span>
+        </div>
+
         <!-- Snapshot / Request Latest Frame Pill -->
         <button id="btnSnapshotAll" class="nav-pill-btn" type="button" title="Request Latest Still Frame (Uses minimal 4G data)">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -443,10 +449,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         streamTimerInterval: null,
         selectedStreamDuration: 10,
         snapshotTimestamps: {},
-        lastFeedsStructureKey: ''
+        lastFeedsStructureKey: '',
+        pollFailCount: 0
       };
 
       const el = {
+        fleetHealthPill: document.getElementById('fleetHealthPill'),
+        fleetHealthText: document.getElementById('fleetHealthText'),
         openMenuBtn: document.getElementById('openMenuBtn'),
         btnSnapshotAll: document.getElementById('btnSnapshotAll'),
         snapshotBtnLabel: document.getElementById('snapshotBtnLabel'),
@@ -533,7 +542,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         bindEvents();
         await fetchSystemInfo();
         await pollData();
-        state.pollTimer = setInterval(pollData, 1800);
+        state.pollTimer = setInterval(pollData, 10000);
       }
 
       async function fetchSystemInfo() {
@@ -842,6 +851,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           const data = await res.json();
           state.edges = data.edges || [];
           state.displayEnabled = data.display_enabled;
+          state.pollFailCount = 0;
 
           updateHUD();
           if (state.viewMode !== 'playback') {
@@ -849,17 +859,28 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           }
           renderFleetCards();
         } catch (err) {
-          const defaultUrl = clientConfig?.default_hub_url || 'https://marvel-reconstruction-atm-planning.trycloudflare.com';
-          el.feedsViewport.innerHTML = `
-            <div class="empty-state">
-              <p>Cannot reach Edge Hub at <code>${escapeHtml(hubBaseUrl)}</code></p>
-              <div style="display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap;">
-                <button class="submit-btn" onclick="window.setQuickHub('${defaultUrl}')">Connect Default Server Tunnel</button>
-                <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('openMenuBtn').click()">Open Menu / Settings</button>
+          console.warn('Fleet poll warning (cellular jitter):', err);
+          state.pollFailCount = (state.pollFailCount || 0) + 1;
+
+          if (el.fleetHealthPill && el.fleetHealthText) {
+            el.fleetHealthPill.className = 'fleet-health-pill reconnecting';
+            el.fleetHealthText.textContent = `⚠️ Syncing (${state.pollFailCount})...`;
+          }
+
+          // Resilient display: Only wipe viewport if we have ZERO previous feeds and failed consecutively at least 2 times
+          if ((!state.edges || state.edges.length === 0) && state.pollFailCount >= 2) {
+            const defaultUrl = clientConfig?.default_hub_url || 'https://fleet.capture.me.uk';
+            el.feedsViewport.innerHTML = `
+              <div class="empty-state">
+                <p>Cannot reach Edge Hub at <code>${escapeHtml(hubBaseUrl)}</code></p>
+                <div style="display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap;">
+                  <button class="submit-btn" onclick="window.setQuickHub('${defaultUrl}')">Connect Default Server Tunnel</button>
+                  <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('openMenuBtn').click()">Open Menu / Settings</button>
+                </div>
               </div>
-            </div>
-          `;
-          renderFleetCards();
+            `;
+            renderFleetCards();
+          }
         }
       }
 
@@ -873,6 +894,25 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             totalFreeGb += parseFloat(e.collection.disk_free_gb) || 0;
           }
         });
+
+        // Update Fleet Health Pill
+        if (el.fleetHealthPill && el.fleetHealthText) {
+          if (state.edges.length === 0) {
+            el.fleetHealthPill.className = 'fleet-health-pill reconnecting';
+            el.fleetHealthText.textContent = '📶 Discovering...';
+          } else if (onlineEdges.length === 0) {
+            el.fleetHealthPill.className = 'fleet-health-pill offline';
+            el.fleetHealthText.textContent = '🔴 Fleet Offline';
+          } else {
+            const peerPings = onlineEdges.filter(e => !e.is_gateway && typeof e.ping_ms === 'number').map(e => e.ping_ms);
+            const avgPing = peerPings.length > 0 
+              ? Math.round(peerPings.reduce((a, b) => a + b, 0) / peerPings.length) 
+              : 0;
+            const pingLabel = avgPing > 0 ? `${avgPing}ms` : 'Mesh';
+            el.fleetHealthPill.className = 'fleet-health-pill';
+            el.fleetHealthText.textContent = `📶 ${onlineEdges.length}/${state.edges.length} Online (${pingLabel})`;
+          }
+        }
 
         if (el.menuEdgeBadge) el.menuEdgeBadge.textContent = onlineEdges.length;
         if (el.menuSensorsCount) el.menuSensorsCount.textContent = totalSensors;
@@ -1806,6 +1846,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         let html = '<div class="devices-grid">';
         state.edges.forEach(edge => {
           const isOnline = edge.online;
+          const isGateway = Boolean(edge.is_gateway);
+          const pingVal = edge.ping_ms;
+          const linkStatus = edge.link_status || (isGateway ? 'gateway' : (isOnline ? 'good' : 'offline'));
+          const pingLabel = isGateway ? '4G Gateway' : (pingVal !== undefined ? `${pingVal}ms` : (isOnline ? 'Active' : 'Offline'));
+          const pingIcon = isGateway ? '📶' : (isOnline ? '⚡' : '⚪');
+
           const sensors = edge.sensors || [];
           const col = edge.collection || {};
           const isRec = col.is_recording;
@@ -1819,6 +1865,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                   <div class="status-indicator ${isOnline ? '' : 'offline'}"></div>
                   <span class="device-name" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>
                   <span class="device-id-tag">${escapeHtml(edge.device_id)}</span>
+                  <span class="ping-badge ${linkStatus}" title="Connection status: ${pingLabel}"><span class="ping-dot"></span>${pingIcon} ${pingLabel}</span>
                 </div>
                 <div class="device-telemetry">
                   ${isRec ? `<span class="rec-pulse-chip">⏺ ${col.duration_seconds || 0}s</span>` : ''}
@@ -1891,6 +1938,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         const mod = (sensor.modality || 'rgb').toLowerCase();
         const isRec = edge.collection && edge.collection.is_recording;
         const frameCount = (edge.collection && edge.collection.frame_counts && edge.collection.frame_counts[sensor.id]) || 0;
+        const isGateway = Boolean(edge.is_gateway);
+        const linkStatus = edge.link_status || (isGateway ? 'gateway' : (edge.online ? 'good' : 'offline'));
+        const pingChip = isGateway 
+          ? `<span class="ping-badge gateway" style="font-size:0.6rem; padding:1px 5px;" title="Master 4G Gateway"><span class="ping-dot"></span>4G</span>`
+          : (edge.ping_ms !== undefined 
+              ? `<span class="ping-badge ${linkStatus}" style="font-size:0.6rem; padding:1px 5px;" title="Ping to Gateway: ${edge.ping_ms}ms"><span class="ping-dot"></span>${edge.ping_ms}ms</span>` 
+              : '');
 
         return `
           <div class="feed-box" id="sensor-${edge.device_id}-${sensor.id}">
@@ -1901,6 +1955,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               </div>
               <div style="display:flex; align-items:center; gap:6px;">
                 <button type="button" class="card-action-btn" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}')" title="Fetch fresh still frame (low data)">📷 Frame</button>
+                ${pingChip}
                 ${showDeviceTag ? `<span class="device-id-tag" title="${escapeHtml(edge.device_name || edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>` : ''}
               </div>
             </div>
@@ -2005,10 +2060,15 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             ? `${col.disk_free_gb} GB free of ${col.disk_total_gb || '--'} GB`
             : 'SD Card storage ready';
 
-          const latency = edge.latency_ms ? `${edge.latency_ms} ms ping` : 'Active';
+          const isGateway = Boolean(edge.is_gateway);
+          const pingVal = edge.ping_ms;
+          const pingLabel = isGateway ? '0ms (Gateway)' : (pingVal !== undefined ? `${pingVal}ms ping` : 'Active');
           const lastSeenStr = edge.last_seen 
             ? timeAgo(edge.last_seen)
             : 'Never';
+          const linkBadgeText = isOnline 
+            ? (isGateway ? `📶 4G GATEWAY` : `🟢 ${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`)
+            : `⚪ OFFLINE (${lastSeenStr})`;
 
           return `
             <div class="fleet-device-card ${isOnline ? 'online' : 'offline'}">
@@ -2021,7 +2081,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                   <span class="fleet-device-id">ID: <code>${escapeHtml(edge.device_id)}</code> &bull; Host: <code>${escapeHtml(edge.host)}:${edge.port}</code></span>
                 </div>
                 <div class="fleet-status-badge ${isOnline ? 'online' : 'offline'}">
-                  ${isOnline ? `🟢 AVAILABLE (${latency})` : `⚪ OFFLINE (${lastSeenStr})`}
+                  ${linkBadgeText}
                 </div>
               </div>
 
