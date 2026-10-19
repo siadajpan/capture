@@ -741,6 +741,119 @@ body {
   font-weight: 700;
 }
 
+/* Fullscreen Sensor Mode & Mini Live Button */
+.feed-box.fullscreen-active {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  max-width: none !important;
+  z-index: 9999 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background: #05070c !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.feed-box.fullscreen-active .feed-box-header {
+  padding: 10px 16px;
+  font-size: 0.85rem;
+  background: rgba(10, 14, 24, 0.95);
+}
+
+.feed-box.fullscreen-active .feed-name {
+  max-width: none;
+  font-size: 0.9rem;
+}
+
+.feed-box.fullscreen-active .feed-screen {
+  flex: 1;
+  height: calc(100dvh - 80px);
+  aspect-ratio: auto;
+  background: #000;
+}
+
+.feed-box.fullscreen-active .feed-screen img {
+  object-fit: contain;
+}
+
+.feed-box.fullscreen-active .feed-footer {
+  padding: 8px 16px;
+  font-size: 0.78rem;
+  background: rgba(10, 14, 24, 0.95);
+}
+
+.fullscreen-close-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.fullscreen-close-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: var(--accent-red);
+}
+
+.feed-box.fullscreen-active .fullscreen-close-btn {
+  display: inline-flex;
+}
+
+.sensor-live-mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(0, 229, 255, 0.12);
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: var(--transition);
+  line-height: 1.3;
+}
+
+.sensor-live-mini-btn:hover {
+  background: rgba(0, 229, 255, 0.25);
+  border-color: var(--accent-cyan);
+}
+
+.sensor-live-mini-btn.active {
+  background: rgba(255, 23, 68, 0.85);
+  border-color: #ff1744;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(255, 23, 68, 0.45);
+}
+
+.feed-overlay-top-left {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  z-index: 6;
+}
+
+.feed-overlay-top-left .snapshot-badge-overlay,
+.feed-overlay-top-left .live-stream-badge-overlay {
+  position: static;
+}
+
 /* Tunnel Highlight Card in Menu */
 .tunnel-highlight-card {
   background: linear-gradient(135deg, rgba(0, 229, 255, 0.08) 0%, rgba(59, 130, 246, 0.05) 100%);

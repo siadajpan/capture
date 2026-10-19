@@ -1047,16 +1047,95 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }, 800);
       };
 
-      window.requestSensorSnapshot = async function (deviceId, target) {
+      window.requestSensorSnapshot = async function (deviceId, target, ev) {
+        if (ev) ev.stopPropagation();
         const now = Date.now();
         const fKey = `${deviceId}:${target}`;
         state.snapshotTimestamps[fKey] = now;
+        const isSensorLive = state.liveStreamingActive || Boolean(state.sensorLiveTimers && state.sensorLiveTimers[fKey]);
         const img = document.getElementById(`feed-img-${deviceId}-${target}`);
-        if (img && !state.liveStreamingActive) {
+        if (img && !isSensorLive) {
           img.src = `${hubBaseUrl}/proxy/snapshot/${deviceId}/${target}?t=${now}`;
         }
         updateRelativeTimestamps();
       };
+
+      window.toggleSensorFullscreen = function (deviceId, sensorId, target, ev) {
+        if (ev && ev.target && ev.target.closest('button')) return;
+        const box = document.getElementById(`sensor-${deviceId}-${sensorId}`);
+        if (!box) return;
+        const willBeFull = !box.classList.contains('fullscreen-active');
+        document.querySelectorAll('.feed-box.fullscreen-active').forEach(elBox => {
+          elBox.classList.remove('fullscreen-active');
+        });
+        if (willBeFull) {
+          box.classList.add('fullscreen-active');
+          state.fullscreenSensorKey = `${deviceId}:${sensorId}`;
+          const fKey = `${deviceId}:${target}`;
+          const isSensorLive = state.liveStreamingActive || Boolean(state.sensorLiveTimers && state.sensorLiveTimers[fKey]);
+          if (!isSensorLive) {
+            window.requestSensorSnapshot(deviceId, target);
+          }
+        } else {
+          state.fullscreenSensorKey = null;
+        }
+      };
+
+      window.toggleSensorLive = function (deviceId, target, ev) {
+        if (ev) ev.stopPropagation();
+        if (!state.sensorLiveTimers) state.sensorLiveTimers = {};
+        if (!state.sensorLiveRemaining) state.sensorLiveRemaining = {};
+        const fKey = `${deviceId}:${target}`;
+
+        if (state.liveStreamingActive) {
+          stopTimedLiveStream();
+          return;
+        }
+
+        if (state.sensorLiveTimers[fKey]) {
+          clearInterval(state.sensorLiveTimers[fKey]);
+          delete state.sensorLiveTimers[fKey];
+          delete state.sensorLiveRemaining[fKey];
+          state.snapshotTimestamps[fKey] = Date.now();
+          updateSensorFeedSources();
+          return;
+        }
+
+        const dur = state.selectedStreamDuration || 10;
+        state.sensorLiveRemaining[fKey] = dur;
+        updateSensorFeedSources();
+
+        state.sensorLiveTimers[fKey] = setInterval(() => {
+          state.sensorLiveRemaining[fKey] = (state.sensorLiveRemaining[fKey] || 1) - 1;
+          if (state.sensorLiveRemaining[fKey] <= 0) {
+            clearInterval(state.sensorLiveTimers[fKey]);
+            delete state.sensorLiveTimers[fKey];
+            delete state.sensorLiveRemaining[fKey];
+            state.snapshotTimestamps[fKey] = Date.now();
+            updateSensorFeedSources();
+          } else {
+            const rem = state.sensorLiveRemaining[fKey];
+            const badge = document.getElementById(`badge-${deviceId}-${target}`);
+            if (badge) {
+              badge.className = 'live-stream-badge-overlay';
+              badge.innerHTML = `<span class="live-pulse-dot"></span><span>LIVE (${rem}s)</span>`;
+            }
+            const btn1 = document.getElementById(`live-btn-${deviceId}-${target}`);
+            if (btn1) btn1.textContent = `⏹ ${rem}s`;
+            const btn2 = document.getElementById(`live-btn-foot-${deviceId}-${target}`);
+            if (btn2) btn2.textContent = `⏹ ${rem}s`;
+          }
+        }, 1000);
+      };
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && state.fullscreenSensorKey) {
+          document.querySelectorAll('.feed-box.fullscreen-active').forEach(elBox => {
+            elBox.classList.remove('fullscreen-active');
+          });
+          state.fullscreenSensorKey = null;
+        }
+      });
 
       async function toggleCollection() {
         const endpoint = state.isRecording ? '/api/collection/stop' : '/api/collection/start';
@@ -1814,15 +1893,31 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             const img = document.getElementById(`feed-img-${edge.device_id}-${target}`);
             const badge = document.getElementById(`badge-${edge.device_id}-${target}`);
             const tsSpan = document.getElementById(`ts-${edge.device_id}-${target}`);
+            const btn1 = document.getElementById(`live-btn-${edge.device_id}-${target}`);
+            const btn2 = document.getElementById(`live-btn-foot-${edge.device_id}-${target}`);
 
-            if (state.liveStreamingActive) {
+            const isPerSensorLive = Boolean(state.sensorLiveTimers && state.sensorLiveTimers[fKey]);
+            const isLive = state.liveStreamingActive || isPerSensorLive;
+            const remSec = state.liveStreamingActive
+              ? state.streamTimeRemaining
+              : ((state.sensorLiveRemaining && state.sensorLiveRemaining[fKey]) || 10);
+
+            if (isLive) {
               const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
-              if (img) img.src = streamUrl;
+              if (img && img.src !== streamUrl) img.src = streamUrl;
               if (badge) {
                 badge.className = 'live-stream-badge-overlay';
-                badge.innerHTML = `<span class="live-pulse-dot"></span><span>LIVE (${state.streamTimeRemaining}s)</span>`;
+                badge.innerHTML = `<span class="live-pulse-dot"></span><span>LIVE (${remSec}s)</span>`;
               }
               if (tsSpan) tsSpan.textContent = `${sensor.fps || 15} fps (Live)`;
+              if (btn1) {
+                btn1.classList.add('active');
+                btn1.textContent = `⏹ ${remSec}s`;
+              }
+              if (btn2) {
+                btn2.classList.add('active');
+                btn2.textContent = `⏹ ${remSec}s`;
+              }
             } else {
               const ts = state.snapshotTimestamps[fKey] || Date.now();
               state.snapshotTimestamps[fKey] = ts;
@@ -1836,6 +1931,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               if (tsSpan) {
                 tsSpan.textContent = ageStr;
                 tsSpan.title = 'Captured: ' + new Date(ts).toLocaleTimeString();
+              }
+              if (btn1) {
+                btn1.classList.remove('active');
+                btn1.textContent = '▶ Live';
+              }
+              if (btn2) {
+                btn2.classList.remove('active');
+                btn2.textContent = '▶ Live';
               }
             }
           });
@@ -1930,11 +2033,18 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       function renderSensorBox(edge, sensor, showDeviceTag = false) {
         const target = sensor.id || sensor.modality;
         const fKey = `${edge.device_id}:${target}`;
+        const isPerSensorLive = Boolean(state.sensorLiveTimers && state.sensorLiveTimers[fKey]);
+        const isLive = state.liveStreamingActive || isPerSensorLive;
+        const remSec = state.liveStreamingActive
+          ? state.streamTimeRemaining
+          : ((state.sensorLiveRemaining && state.sensorLiveRemaining[fKey]) || 10);
+
         const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
         const ts = state.snapshotTimestamps[fKey] || (state.snapshotTimestamps[fKey] = Date.now());
         const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}${ts ? `?t=${ts}` : ''}`;
-        const currentSrc = state.liveStreamingActive ? streamUrl : snapshotUrl;
+        const currentSrc = isLive ? streamUrl : snapshotUrl;
         const frameAge = formatFrameAge(ts);
+        const isFull = state.fullscreenSensorKey === `${edge.device_id}:${sensor.id}`;
 
         const mod = (sensor.modality || 'rgb').toLowerCase();
         const isRec = edge.collection && edge.collection.is_recording;
@@ -1948,7 +2058,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               : '');
 
         return `
-          <div class="feed-box" id="sensor-${edge.device_id}-${sensor.id}">
+          <div class="feed-box ${isFull ? 'fullscreen-active' : ''}" id="sensor-${edge.device_id}-${sensor.id}">
             <div class="feed-box-header">
               <div style="display:flex; align-items:center; gap:6px; overflow:hidden;">
                 <span class="feed-modality-badge modality-${mod}">${mod}</span>
@@ -1957,19 +2067,25 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                 ${pingChip}
                 <span class="device-id-tag" title="${escapeHtml(edge.device_id)}">${escapeHtml(edge.device_name || edge.device_id)}</span>
+                <button type="button" class="fullscreen-close-btn" onclick="window.toggleSensorFullscreen('${escapeHtml(edge.device_id)}', '${escapeHtml(sensor.id)}', '${escapeHtml(target)}')" title="Exit Full Screen (Esc)">✕ Close</button>
               </div>
             </div>
 
-            <div class="feed-screen" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}')" style="cursor:pointer;" title="Click to refresh frame">
+            <div class="feed-screen" onclick="window.toggleSensorFullscreen('${escapeHtml(edge.device_id)}', '${escapeHtml(sensor.id)}', '${escapeHtml(target)}', event)" style="cursor:pointer;" title="Click to toggle Full Screen">
               ${edge.online ? `
                 <img src="${currentSrc}" alt="${sensor.name}" id="feed-img-${edge.device_id}-${target}" loading="lazy">
-                <div class="${state.liveStreamingActive ? 'live-stream-badge-overlay' : 'snapshot-badge-overlay'}" id="badge-${edge.device_id}-${target}">
-                  ${state.liveStreamingActive ? `
-                    <span class="live-pulse-dot"></span>
-                    <span>LIVE (${state.streamTimeRemaining}s)</span>
-                  ` : `
-                    <span>${frameAge}</span>
-                  `}
+                <div class="feed-overlay-top-left">
+                  <div class="${isLive ? 'live-stream-badge-overlay' : 'snapshot-badge-overlay'}" id="badge-${edge.device_id}-${target}">
+                    ${isLive ? `
+                      <span class="live-pulse-dot"></span>
+                      <span>LIVE (${remSec}s)</span>
+                    ` : `
+                      <span>${frameAge}</span>
+                    `}
+                  </div>
+                  <button type="button" class="sensor-live-mini-btn ${isLive ? 'active' : ''}" id="live-btn-${edge.device_id}-${target}" onclick="window.toggleSensorLive('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Toggle Live Video Stream">
+                    ${isLive ? `⏹ ${remSec}s` : '▶ Live'}
+                  </button>
                 </div>
               ` : `
                 <div class="display-off-overlay">
@@ -1983,9 +2099,17 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             </div>
 
             <div class="feed-footer">
-              <span id="ts-${edge.device_id}-${target}" title="${ts ? 'Captured at: ' + new Date(ts).toLocaleTimeString() : ''}">
-                ${state.liveStreamingActive ? `${sensor.fps || 15} fps (Live)` : frameAge}
-              </span>
+              <div style="display:inline-flex; align-items:center; gap:6px;">
+                <span id="ts-${edge.device_id}-${target}" title="${ts ? 'Captured at: ' + new Date(ts).toLocaleTimeString() : ''}">
+                  ${isLive ? `${sensor.fps || 15} fps (Live)` : frameAge}
+                </span>
+                <button type="button" class="sensor-live-mini-btn ${isLive ? 'active' : ''}" id="live-btn-foot-${edge.device_id}-${target}" onclick="window.toggleSensorLive('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Toggle Live Stream">
+                  ${isLive ? `⏹ ${remSec}s` : '▶ Live'}
+                </button>
+                <button type="button" class="sensor-live-mini-btn" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Refresh single frame">
+                  🔄
+                </button>
+              </div>
               <span>${isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY'}</span>
             </div>
           </div>
@@ -2011,6 +2135,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           (edge.sensors || []).forEach(sensor => {
             const target = sensor.id || sensor.modality;
             const fKey = `${edge.device_id}:${target}`;
+            if (state.sensorLiveTimers && state.sensorLiveTimers[fKey]) return;
             const ts = state.snapshotTimestamps[fKey];
             if (!ts) return;
             const ageStr = formatFrameAge(ts);
