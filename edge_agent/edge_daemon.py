@@ -962,10 +962,13 @@ class SensorDriver:
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 cap.set(cv2.CAP_PROP_FPS, self.fps)
                 if cap.isOpened():
-                    self.camera_obj = cap
-                    self.backend = "opencv"
-                    logger.info(f"[{self.sensor_id}] Opened OpenCV V4L2 device {self.device_node}")
-                    return
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        self.camera_obj = cap
+                        self.backend = "opencv"
+                        logger.info(f"[{self.sensor_id}] Opened OpenCV V4L2 device {self.device_node}")
+                        return
+                    cap.release()
             except Exception as e:
                 logger.info(f"[{self.sensor_id}] OpenCV init failed: {e}")
 
