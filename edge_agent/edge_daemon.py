@@ -576,6 +576,27 @@ class HLKLD2410SDriver:
                 pass
             time.sleep(1.0)
 
+    def _get_font(self, size, bold=False):
+        candidate_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
+            "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+            "arial.ttf"
+        ]
+        from PIL import ImageFont
+        for p in candidate_paths:
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+        try:
+            return ImageFont.load_default(size=size)
+        except Exception:
+            return ImageFont.load_default()
+
     def render_radar_frame(self):
         try:
             from PIL import Image, ImageDraw
@@ -598,92 +619,114 @@ class HLKLD2410SDriver:
 
         w = self.width
         h = self.height
-        img = Image.new("RGB", (w, h), color=(12, 16, 24))
+        img = Image.new("RGB", (w, h), color=(13, 17, 23)) # Clean deep dark matte
         draw = ImageDraw.Draw(img)
 
-        # Center of radar cone near bottom center
-        cx = w // 2
-        cy = int(h * 0.78)
-        max_radius = int(h * 0.65)
-        max_dist_m = 6.0
+        font_giant = self._get_font(104, bold=True)
+        font_unit  = self._get_font(32, bold=True)
+        font_sub   = self._get_font(16, bold=False)
+        font_badge = self._get_font(14, bold=True)
+        font_meta  = self._get_font(12, bold=False)
 
-        fov_deg = 65
-        left_angle = 270 - fov_deg
-        right_angle = 270 + fov_deg
+        # 1. Top Header Bar
+        draw.rectangle([0, 0, w, 48], fill=(18, 24, 34))
+        draw.line([0, 48, w, 48], fill=(30, 41, 59), width=1)
 
-        # Range rings
-        ranges = [1.0, 2.0, 3.0, 4.0, 6.0]
-        for r_m in ranges:
-            r_px = int((r_m / max_dist_m) * max_radius)
-            bbox = [cx - r_px, cy - r_px, cx + r_px, cy + r_px]
-            draw.arc(bbox, start=left_angle, end=right_angle, fill=(28, 45, 68), width=1)
-            lbl_x = cx + int(r_px * math.cos(math.radians(270 - fov_deg + 4)))
-            lbl_y = cy + int(r_px * math.sin(math.radians(270 - fov_deg + 4)))
-            draw.text((lbl_x, lbl_y - 6), f"{r_m:.0f}m", fill=(70, 95, 125))
-
-        # Radial guidelines
-        for ang in [270 - fov_deg, 270 - fov_deg / 2, 270, 270 + fov_deg / 2, 270 + fov_deg]:
-            rad = math.radians(ang)
-            ex = cx + int(max_radius * math.cos(rad))
-            ey = cy + int(max_radius * math.sin(rad))
-            line_col = (40, 65, 95) if ang in [270 - fov_deg, 270 + fov_deg] else (22, 36, 52)
-            draw.line([cx, cy, ex, ey], fill=line_col, width=1)
-
-        # Rotating sweep line
-        sweep_angle = time.time() * 2.5
-        sweep_rad = math.radians(270 + math.sin(sweep_angle) * fov_deg)
-        sx = cx + int(max_radius * math.cos(sweep_rad))
-        sy = cy + int(max_radius * math.sin(sweep_rad))
-        draw.line([cx, cy, sx, sy], fill=(0, 200, 255), width=2)
-
-        # Draw Target if detected
-        if detected and dist_cm is not None and dist_cm > 0:
-            d_m = dist_cm / 100.0
-            clamped_m = min(d_m, max_dist_m)
-            t_px = int((clamped_m / max_dist_m) * max_radius)
-            tx = cx
-            ty = cy - t_px
-
-            # Concentric glowing rings
-            for ring_r in [18, 12, 6]:
-                draw.ellipse([tx - ring_r, ty - ring_r, tx + ring_r, ty + ring_r], outline=(0, 255, 150), width=1)
-            draw.ellipse([tx - 4, ty - 4, tx + 4, ty + 4], fill=(255, 255, 255))
-
-            # Target pill label
-            draw.rectangle([tx + 12, ty - 14, tx + 95, ty + 12], fill=(16, 28, 40), outline=(0, 230, 120))
-            draw.text((tx + 18, ty - 10), f"{d_m:.2f} m", fill=(0, 255, 180))
-            draw.text((tx + 18, ty + 1), f"{dist_cm} cm", fill=(180, 220, 240))
-
-        # Top Header Bar
-        draw.rectangle([0, 0, w, 55], fill=(8, 12, 18))
-        draw.line([0, 55, w, 55], fill=(24, 38, 56), width=1)
-
-        draw.text((16, 12), "HLK-LD2410S 24GHz mmWave Radar", fill=(240, 245, 255))
-        draw.text((16, 32), f"UART 115200 bps | Packets: {pkt_cnt} | OT2 GPIO: {'ACTIVE' if detected else 'CLEAR'}", fill=(110, 140, 175))
+        draw.text((20, 16), "HLK-LD2410S", fill=(241, 245, 249), font=font_badge)
+        draw.text((130, 17), "•  24GHz mmWave Presence Radar", fill=(100, 116, 139), font=font_meta)
 
         # Presence Badge
         if detected:
-            badge_col = (0, 200, 100)
-            badge_txt = "TARGET DETECTED"
-            bg_col = (10, 45, 25)
+            badge_border = (16, 185, 129)
+            badge_bg = (6, 78, 59)
+            badge_text = "● PRESENCE DETECTED"
+            badge_txt_col = (52, 211, 153)
         else:
-            badge_col = (120, 140, 170)
-            badge_txt = "STANDBY / CLEAR"
-            bg_col = (20, 28, 38)
+            badge_border = (71, 85, 105)
+            badge_bg = (30, 41, 59)
+            badge_text = "○ STANDBY (CLEAR)"
+            badge_txt_col = (148, 163, 184)
 
-        draw.rectangle([w - 190, 12, w - 16, 44], fill=bg_col, outline=badge_col, width=1)
-        draw.ellipse([w - 180, 24, w - 170, 34], fill=badge_col)
-        draw.text((w - 162, 21), badge_txt, fill=(240, 255, 250))
+        bw, bh = 170, 26
+        bx = w - bw - 18
+        by = 11
+        draw.rectangle([bx, by, bx + bw, by + bh], fill=badge_bg, outline=badge_border, width=1)
+        draw.text((bx + 14, by + 5), badge_text, fill=badge_txt_col, font=font_badge)
 
-        # Bottom Stats Bar
-        draw.rectangle([0, h - 45, w, h], fill=(8, 12, 18))
-        draw.line([0, h - 45, w, h - 45], fill=(24, 38, 56), width=1)
+        def _text_size(txt, fnt):
+            if hasattr(draw, "textbbox"):
+                bb = draw.textbbox((0, 0), txt, font=fnt)
+                return bb[2] - bb[0], bb[3] - bb[1]
+            return draw.textsize(txt, font=fnt)
 
-        dist_str = f"{dist_cm} cm ({(dist_cm/100.0):.2f}m)" if (detected and dist_cm) else "--"
-        draw.text((16, h - 32), f"DISTANCE: {dist_str}", fill=(0, 229, 255))
-        draw.text((220, h - 32), f"STATE: {st_text}", fill=(200, 220, 240))
-        ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
-        draw.text((w - 170, h - 32), ts_str, fill=(90, 115, 145))
+        # 2. Main Hero Distance Centerpiece (Minimalist)
+        center_y = int(h * 0.44)
+
+        if detected and dist_cm is not None and dist_cm > 0:
+            d_m = dist_cm / 100.0
+            dist_main_str = f"{d_m:.2f}"
+            dist_unit_str = "m"
+            cm_sub_str = f"{dist_cm} cm"
+
+            num_w, num_h = _text_size(dist_main_str, font_giant)
+            unit_w, _ = _text_size(dist_unit_str, font_unit)
+
+            total_w = num_w + 12 + unit_w
+            start_x = (w - total_w) // 2
+
+            num_x = start_x
+            num_y = center_y - (num_h // 2) - 10
+            draw.text((num_x, num_y), dist_main_str, fill=(56, 189, 248), font=font_giant)
+
+            unit_x = num_x + num_w + 12
+            unit_y = num_y + num_h - 42
+            draw.text((unit_x, unit_y), dist_unit_str, fill=(148, 163, 184), font=font_unit)
+
+            lbl_str = f"DISTANCE TO TARGET  ({cm_sub_str})"
+            lbl_w, _ = _text_size(lbl_str, font_sub)
+            draw.text(((w - lbl_w) // 2, num_y + num_h + 16), lbl_str, fill=(148, 163, 184), font=font_sub)
+
+        else:
+            standby_str = "--"
+            num_w, num_h = _text_size(standby_str, font_giant)
+            draw.text(((w - num_w) // 2, center_y - (num_h // 2) - 25), standby_str, fill=(71, 85, 105), font=font_giant)
+
+            lbl_str = "NO TARGET IN RANGE"
+            lbl_w, _ = _text_size(lbl_str, font_sub)
+            draw.text(((w - lbl_w) // 2, center_y + (num_h // 2) + 20), lbl_str, fill=(100, 116, 139), font=font_sub)
+
+        # 3. Minimalist Horizontal Range Bar (0m to 6m)
+        bar_w = 460
+        bar_x = (w - bar_w) // 2
+        bar_y = h - 105
+        bar_h = 6
+
+        draw.rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h], fill=(30, 41, 59))
+
+        for m in range(7):
+            tx = bar_x + int((m / 6.0) * bar_w)
+            draw.line([tx, bar_y - 3, tx, bar_y + bar_h + 3], fill=(51, 65, 85), width=1)
+            tlbl = f"{m}m"
+            tw, _ = _text_size(tlbl, font_meta)
+            draw.text((tx - tw // 2, bar_y + bar_h + 6), tlbl, fill=(71, 85, 105), font=font_meta)
+
+        if detected and dist_cm is not None and dist_cm > 0:
+            d_m = dist_cm / 100.0
+            clamp_m = max(0.0, min(d_m, 6.0))
+            target_x = bar_x + int((clamp_m / 6.0) * bar_w)
+            draw.rectangle([bar_x, bar_y, target_x, bar_y + bar_h], fill=(14, 165, 233))
+            draw.ellipse([target_x - 8, bar_y - 5, target_x + 8, bar_y + bar_h + 5], fill=(56, 189, 248), outline=(255, 255, 255), width=1)
+
+        # 4. Bottom Footer Bar
+        draw.rectangle([0, h - 42, w, h], fill=(18, 24, 34))
+        draw.line([0, h - 42, w, h - 42], fill=(30, 41, 59), width=1)
+
+        state_disp = st_text if detected else "Scanning..."
+        draw.text((20, h - 28), f"STATUS: {state_disp.upper()}", fill=(148, 163, 184), font=font_meta)
+        draw.text((w // 2 - 40, h - 28), f"PACKETS: {pkt_cnt}", fill=(100, 116, 139), font=font_meta)
+
+        clock_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        draw.text((w - 150, h - 28), clock_str, fill=(100, 116, 139), font=font_meta)
 
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
@@ -811,6 +854,17 @@ class SensorDriver:
                 logger.info(f"[{self.sensor_id}] {rpicam_bin} hardware stream test failed: {e}")
 
         # 1. Try direct V4L2 stream via v4l2-ctl (best for Unicam / VD55G0 global shutter monochrome)
+        if not os.path.exists(self.device_node) and os.name != "nt":
+            try:
+                logger.info(f"[{self.sensor_id}] {self.device_node} missing; asserting CAM_GPIO (40/41) high and reloading vd55g0...")
+                subprocess.run(
+                    "sudo raspi-gpio set 40 dh 2>/dev/null; sudo raspi-gpio set 41 dh 2>/dev/null; "
+                    "sudo modprobe -r vd55g0 2>/dev/null; sleep 0.5; sudo modprobe vd55g0 2>/dev/null; sleep 0.5",
+                    shell=True, timeout=5
+                )
+            except Exception as ex:
+                logger.debug(f"[{self.sensor_id}] vd55g0 auto-reload skipped: {ex}")
+
         if os.path.exists(self.device_node):
             try:
                 # Explicitly configure device format so driver and reader are 100% synchronized
@@ -1386,11 +1440,13 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._handle_snapshot(target)
         elif path == "/api/collection/start":
             res = self.daemon_ref.collector.start_collection()
-            self.daemon_ref.broadcast_to_peers("/api/collection/start", b"{}")
+            if "peer=1" not in parsed.query:
+                self.daemon_ref.broadcast_to_peers("/api/collection/start?peer=1", b"{}", is_recording_state=True)
             self._send_json(res)
         elif path == "/api/collection/stop":
             res = self.daemon_ref.collector.stop_collection()
-            self.daemon_ref.broadcast_to_peers("/api/collection/stop", b"{}")
+            if "peer=1" not in parsed.query:
+                self.daemon_ref.broadcast_to_peers("/api/collection/stop?peer=1", b"{}", is_recording_state=False)
             self._send_json(res)
         elif path == "/api/sessions" or path == "/api/recordings/sessions":
             self._handle_list_sessions()
@@ -1423,13 +1479,21 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             res = self.daemon_ref.collector.start_collection(session_label=label)
-            self.daemon_ref.broadcast_to_peers("/api/collection/start", body or b"{}")
+            if "peer=1" not in parsed.query:
+                self.daemon_ref.broadcast_to_peers("/api/collection/start?peer=1", body or b"{}", is_recording_state=True)
             self._send_json(res)
         elif path == "/api/collection/stop":
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                self.rfile.read(content_length)
             res = self.daemon_ref.collector.stop_collection()
-            self.daemon_ref.broadcast_to_peers("/api/collection/stop", b"{}")
+            if "peer=1" not in parsed.query:
+                self.daemon_ref.broadcast_to_peers("/api/collection/stop?peer=1", b"{}", is_recording_state=False)
             self._send_json(res)
         elif path == "/api/display/toggle":
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                self.rfile.read(content_length)
             self._send_json({"display_enabled": True})
         elif path == "/api/exec":
             content_length = int(self.headers.get('Content-Length', 0))
@@ -1806,14 +1870,28 @@ class EdgeDaemon:
         self._peer_thread = threading.Thread(target=self._peer_scanner_loop, daemon=True)
         self._peer_thread.start()
 
-    def broadcast_to_peers(self, endpoint, payload_bytes):
-        for dev_id, ip in list(self.peer_ips.items()):
+    def broadcast_to_peers(self, endpoint, payload_bytes, is_recording_state=None):
+        # Immediately update in-memory peer_edges cache so UI polls see the new state right away
+        if is_recording_state is not None:
+            for dev_id, p_edge in list(self.peer_edges.items()):
+                if "collection" in p_edge and isinstance(p_edge["collection"], dict):
+                    p_edge["collection"]["is_recording"] = is_recording_state
+                    if not is_recording_state:
+                        p_edge["collection"]["duration_seconds"] = 0
+
+        def _send_one(item):
+            dev_id, ip = item
             try:
                 url = f"http://{ip}:5001{endpoint}"
                 req = urllib.request.Request(url, data=payload_bytes, headers={"Content-Type": "application/json"}, method="POST")
-                urllib.request.urlopen(req, timeout=1.5)
+                urllib.request.urlopen(req, timeout=5.0).read()
             except Exception as e:
                 logger.warning(f"Failed to broadcast {endpoint} to {dev_id} ({ip}): {e}")
+
+        items = list(self.peer_ips.items())
+        if items:
+            with ThreadPoolExecutor(max_workers=len(items)) as pool:
+                list(pool.map(_send_one, items))
 
     def _peer_scanner_loop(self):
         my_id = self.config.get("device_id")
@@ -1822,6 +1900,7 @@ class EdgeDaemon:
             candidates = set([
                 "192.168.137.201", "192.168.137.203", "192.168.137.204", "192.168.137.35",
                 "192.168.4.1", "192.168.4.201", "192.168.4.203", "192.168.4.204", "192.168.4.35",
+                "192.168.100.122", "192.168.100.201", "192.168.100.203", "192.168.100.204", "192.168.100.35",
                 "10.42.0.1", "10.42.0.201", "10.42.0.203", "10.42.0.204", "10.42.0.35"
             ])
             # 1. Check dnsmasq leases if hotspot master
@@ -1831,10 +1910,27 @@ class EdgeDaemon:
                         with open(lease_file, "r") as f:
                             for line in f:
                                 parts = line.split()
-                                if len(parts) >= 3 and parts[2].startswith("192.168.4."):
+                                if len(parts) >= 3 and (parts[2].startswith("192.168.4.") or parts[2].startswith("192.168.100.")):
                                     candidates.add(parts[2])
                     except Exception:
                         pass
+            # 1b. Query Qualcomm 4G-UFI-C12 modem DHCP client table if reachable
+            try:
+                req = urllib.request.Request(
+                    "http://192.168.100.1/ajax",
+                    data=b'{"funcNo":1011}',
+                    headers={"Content-Type": "application/json"},
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=0.8) as resp:
+                    uz_data = json.loads(resp.read().decode())
+                    for r in uz_data.get("results", []):
+                        for dev in r.get("device_arr", []):
+                            ip = dev.get("ip")
+                            if ip:
+                                candidates.add(ip)
+            except Exception:
+                pass
             # 2. Check ARP table
             if os.path.exists("/proc/net/arp"):
                 try:
@@ -1843,13 +1939,15 @@ class EdgeDaemon:
                             parts = line.split()
                             if len(parts) >= 4 and parts[0] != "IP" and parts[3] != "00:00:00:00:00:00":
                                 ip = parts[0]
-                                if ip.startswith("192.168.137.") or ip.startswith("192.168.4.") or ip.startswith("10.42.0."):
+                                if ip.startswith("192.168.137.") or ip.startswith("192.168.4.") or ip.startswith("192.168.100.") or ip.startswith("10.42.0."):
                                     candidates.add(ip)
                 except Exception:
                     pass
-            # 3. Add dynamic hotspot pool IPs
+            # 3. Add dynamic hotspot pool IPs (CaptureFleet 192.168.4.10-29 and 4G-UFI-C12 192.168.100.100-115)
             for i in range(10, 30):
                 candidates.add(f"192.168.4.{i}")
+            for i in range(100, 116):
+                candidates.add(f"192.168.100.{i}")
             return list(candidates)
 
         def check_peer(ip):
