@@ -409,6 +409,301 @@ class YDLidarDriver:
         self.running = False
 
 
+class HLKLD2410SDriver:
+    """
+    High-performance driver for HLK-LD2410S 24GHz mmWave radar sensor.
+    Supports continuous UART data report stream (both Minimalist and Standard packets)
+    and optional hardware digital presence status pin (GPIO 18 / Pin 12).
+    Generates real-time 2D polar radar arc display with target distance, movement state,
+    and manned/unmanned status badges.
+    """
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.port = cfg.get("device", "/dev/serial0")
+        self.baudrate = cfg.get("baudrate", 115200)
+        self.presence_pin = cfg.get("gpio_presence", 18)
+        self.width = cfg.get("width", 640)
+        self.height = cfg.get("height", 480)
+        self.fps = cfg.get("fps", 10)
+        self.running = True
+        self.lock = threading.Lock()
+        
+        self.target_detected = False
+        self.distance_cm = None
+        self.state_str = "Standby (No Target)"
+        self.last_update_time = 0.0
+        self.packets_received = 0
+        self.latest_jpeg = None
+        self.last_render_time = 0.0
+
+        # Setup GPIO for presence pin if on Linux/RPi
+        self.has_gpio = False
+        try:
+            import RPi.GPIO as GPIO
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setwarnings(False)
+            if self.presence_pin is not None:
+                GPIO.setup(self.presence_pin, GPIO.IN)
+                self.has_gpio = True
+        except Exception:
+            pass
+
+        # Ensure UART pin alternate functions (GPIO 14 & 15 -> alt0)
+        if os.name != 'nt':
+            try:
+                subprocess.run(['raspi-gpio', 'set', '14', 'a0'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(['raspi-gpio', 'set', '15', 'a0'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
+
+        # Start serial reader background thread
+        self.reader_thread = threading.Thread(target=self._serial_loop, daemon=True)
+        self.reader_thread.start()
+
+    def _serial_loop(self):
+        candidate_ports = [self.port, "/dev/serial0", "/dev/ttyAMA0", "/dev/ttyS0"]
+        if os.name == 'nt':
+            candidate_ports = [self.port, "COM3", "COM4", "COM5"]
+
+        STD_HEADER = bytes([0xF4, 0xF3, 0xF2, 0xF1])
+        STD_TAIL   = bytes([0xF8, 0xF7, 0xF6, 0xF5])
+        MINI_HEADER = 0x6E
+        MINI_TAIL   = 0x62
+
+        while self.running:
+            ser = None
+            for p in candidate_ports:
+                if not p:
+                    continue
+                if os.name != 'nt' and not os.path.exists(p):
+                    continue
+                try:
+                    import serial
+                    ser = serial.Serial(p, baudrate=self.baudrate, timeout=0.2)
+                    logger.info(f"[radar] Connected to HLK-LD2410S on {p} @ {self.baudrate} baud")
+                    break
+                except Exception:
+                    continue
+
+            if not ser:
+                # If cannot open serial, fallback check GPIO presence
+                if self.has_gpio:
+                    try:
+                        import RPi.GPIO as GPIO
+                        v = GPIO.input(self.presence_pin)
+                        with self.lock:
+                            self.target_detected = (v == 1)
+                            if self.target_detected:
+                                self.state_str = "Target Detected (GPIO)"
+                            else:
+                                self.state_str = "Standby (No Target)"
+                    except Exception:
+                        pass
+                time.sleep(1.0)
+                continue
+
+            buf = bytearray()
+            while self.running:
+                try:
+                    # Check GPIO presence pin
+                    if self.has_gpio:
+                        try:
+                            import RPi.GPIO as GPIO
+                            v = GPIO.input(self.presence_pin)
+                            if v == 1 and not self.target_detected:
+                                with self.lock:
+                                    self.target_detected = True
+                        except Exception:
+                            pass
+
+                    n = ser.in_waiting
+                    if n > 0:
+                        chunk = ser.read(n)
+                        buf.extend(chunk)
+
+                        # Process buffer
+                        while len(buf) >= 5:
+                            # 1. Minimalist frame: 0x6E [state:1] [dist_low:1] [dist_high:1] ... 0x62
+                            if buf[0] == MINI_HEADER:
+                                try:
+                                    end_pos = buf.index(MINI_TAIL)
+                                    frame = buf[:end_pos + 1]
+                                    buf = buf[end_pos + 1:]
+                                    if len(frame) >= 5:
+                                        st = frame[1]
+                                        dist = int.from_bytes(frame[2:4], byteorder='little')
+                                        with self.lock:
+                                            self.target_detected = (st > 0)
+                                            self.distance_cm = dist if self.target_detected else None
+                                            self.state_str = "Target Detected" if st > 0 else "Standby (No Target)"
+                                            self.last_update_time = time.time()
+                                            self.packets_received += 1
+                                    continue
+                                except ValueError:
+                                    break
+                            # 2. Standard frame: F4 F3 F2 F1 ... F8 F7 F6 F5
+                            elif buf.startswith(STD_HEADER):
+                                end_idx = buf.find(STD_TAIL, 4)
+                                if end_idx != -1:
+                                    frame = buf[:end_idx + 4]
+                                    buf = buf[end_idx + 4:]
+                                    if len(frame) >= 15:
+                                        t_st = frame[8]
+                                        m_d = int.from_bytes(frame[9:11], byteorder='little')
+                                        s_d = int.from_bytes(frame[12:14], byteorder='little')
+                                        active_dist = m_d if (m_d > 0) else s_d
+                                        st_map = {0: "Standby (No Target)", 1: "Moving Target", 2: "Stationary Target", 3: "Moving & Stationary"}
+                                        with self.lock:
+                                            self.target_detected = (t_st > 0)
+                                            self.distance_cm = active_dist if self.target_detected else None
+                                            self.state_str = st_map.get(t_st, f"Target Active (0x{t_st:02x})")
+                                            self.last_update_time = time.time()
+                                            self.packets_received += 1
+                                    continue
+                                else:
+                                    break
+                            else:
+                                buf.pop(0)
+                    else:
+                        time.sleep(0.02)
+                except Exception as ex:
+                    logger.warning(f"[radar] Serial loop read error: {ex}")
+                    break
+
+            try:
+                ser.close()
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+    def render_radar_frame(self):
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError:
+            return b""
+
+        with self.lock:
+            detected = self.target_detected
+            dist_cm = self.distance_cm
+            st_text = self.state_str
+            pkt_cnt = self.packets_received
+            last_up = self.last_update_time
+
+        # If no packet received in last 2.5s and target was detected, check timeout
+        if time.time() - last_up > 2.5 and detected:
+            if not self.has_gpio:
+                detected = False
+                dist_cm = None
+                st_text = "Standby (No Target)"
+
+        w = self.width
+        h = self.height
+        img = Image.new("RGB", (w, h), color=(12, 16, 24))
+        draw = ImageDraw.Draw(img)
+
+        # Center of radar cone near bottom center
+        cx = w // 2
+        cy = int(h * 0.78)
+        max_radius = int(h * 0.65)
+        max_dist_m = 6.0
+
+        fov_deg = 65
+        left_angle = 270 - fov_deg
+        right_angle = 270 + fov_deg
+
+        # Range rings
+        ranges = [1.0, 2.0, 3.0, 4.0, 6.0]
+        for r_m in ranges:
+            r_px = int((r_m / max_dist_m) * max_radius)
+            bbox = [cx - r_px, cy - r_px, cx + r_px, cy + r_px]
+            draw.arc(bbox, start=left_angle, end=right_angle, fill=(28, 45, 68), width=1)
+            lbl_x = cx + int(r_px * math.cos(math.radians(270 - fov_deg + 4)))
+            lbl_y = cy + int(r_px * math.sin(math.radians(270 - fov_deg + 4)))
+            draw.text((lbl_x, lbl_y - 6), f"{r_m:.0f}m", fill=(70, 95, 125))
+
+        # Radial guidelines
+        for ang in [270 - fov_deg, 270 - fov_deg / 2, 270, 270 + fov_deg / 2, 270 + fov_deg]:
+            rad = math.radians(ang)
+            ex = cx + int(max_radius * math.cos(rad))
+            ey = cy + int(max_radius * math.sin(rad))
+            line_col = (40, 65, 95) if ang in [270 - fov_deg, 270 + fov_deg] else (22, 36, 52)
+            draw.line([cx, cy, ex, ey], fill=line_col, width=1)
+
+        # Rotating sweep line
+        sweep_angle = time.time() * 2.5
+        sweep_rad = math.radians(270 + math.sin(sweep_angle) * fov_deg)
+        sx = cx + int(max_radius * math.cos(sweep_rad))
+        sy = cy + int(max_radius * math.sin(sweep_rad))
+        draw.line([cx, cy, sx, sy], fill=(0, 200, 255), width=2)
+
+        # Draw Target if detected
+        if detected and dist_cm is not None and dist_cm > 0:
+            d_m = dist_cm / 100.0
+            clamped_m = min(d_m, max_dist_m)
+            t_px = int((clamped_m / max_dist_m) * max_radius)
+            tx = cx
+            ty = cy - t_px
+
+            # Concentric glowing rings
+            for ring_r in [18, 12, 6]:
+                draw.ellipse([tx - ring_r, ty - ring_r, tx + ring_r, ty + ring_r], outline=(0, 255, 150), width=1)
+            draw.ellipse([tx - 4, ty - 4, tx + 4, ty + 4], fill=(255, 255, 255))
+
+            # Target pill label
+            draw.rectangle([tx + 12, ty - 14, tx + 95, ty + 12], fill=(16, 28, 40), outline=(0, 230, 120))
+            draw.text((tx + 18, ty - 10), f"{d_m:.2f} m", fill=(0, 255, 180))
+            draw.text((tx + 18, ty + 1), f"{dist_cm} cm", fill=(180, 220, 240))
+
+        # Top Header Bar
+        draw.rectangle([0, 0, w, 55], fill=(8, 12, 18))
+        draw.line([0, 55, w, 55], fill=(24, 38, 56), width=1)
+
+        draw.text((16, 12), "HLK-LD2410S 24GHz mmWave Radar", fill=(240, 245, 255))
+        draw.text((16, 32), f"UART 115200 bps | Packets: {pkt_cnt} | OT2 GPIO: {'ACTIVE' if detected else 'CLEAR'}", fill=(110, 140, 175))
+
+        # Presence Badge
+        if detected:
+            badge_col = (0, 200, 100)
+            badge_txt = "TARGET DETECTED"
+            bg_col = (10, 45, 25)
+        else:
+            badge_col = (120, 140, 170)
+            badge_txt = "STANDBY / CLEAR"
+            bg_col = (20, 28, 38)
+
+        draw.rectangle([w - 190, 12, w - 16, 44], fill=bg_col, outline=badge_col, width=1)
+        draw.ellipse([w - 180, 24, w - 170, 34], fill=badge_col)
+        draw.text((w - 162, 21), badge_txt, fill=(240, 255, 250))
+
+        # Bottom Stats Bar
+        draw.rectangle([0, h - 45, w, h], fill=(8, 12, 18))
+        draw.line([0, h - 45, w, h - 45], fill=(24, 38, 56), width=1)
+
+        dist_str = f"{dist_cm} cm ({(dist_cm/100.0):.2f}m)" if (detected and dist_cm) else "--"
+        draw.text((16, h - 32), f"DISTANCE: {dist_str}", fill=(0, 229, 255))
+        draw.text((220, h - 32), f"STATE: {st_text}", fill=(200, 220, 240))
+        ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        draw.text((w - 170, h - 32), ts_str, fill=(90, 115, 145))
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+
+    def get_jpeg_frame(self):
+        now = time.time()
+        min_interval = 1.0 / max(self.fps, 5)
+        if self.latest_jpeg is None or (now - self.last_render_time >= min_interval):
+            try:
+                self.latest_jpeg = self.render_radar_frame()
+                self.last_render_time = now
+            except Exception as e:
+                logger.error(f"[radar] Render frame error: {e}")
+        return self.latest_jpeg
+
+    def stop(self):
+        self.running = False
+
+
 class SensorDriver:
     """Multi-backend hardware sensor driver (picamera, pygame, opencv, raspistill, ydlidar, fallback)."""
 
@@ -442,6 +737,13 @@ class SensorDriver:
 
     def _init_hardware(self):
         sensor_type = self.cfg.get("type", "auto")
+
+        # Check for mmWave Radar sensor
+        if sensor_type in ["radar", "ld2410s", "ld2410"] or self.modality.lower() in ["radar"]:
+            self.radar_driver = HLKLD2410SDriver(self.cfg)
+            self.backend = "radar"
+            logger.info(f"[{self.sensor_id}] Initialized HLK-LD2410S Radar driver on {self.radar_driver.port} ({self.width}x{self.height} @ {self.fps}fps)")
+            return
 
         # Check for LiDAR sensor
         if sensor_type in ["ydlidar", "lidar"] or self.modality.lower() in ["depth", "lidar"]:
@@ -710,7 +1012,10 @@ class SensorDriver:
 
     def get_jpeg_frame(self):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
-        if self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
+        if self.backend == "radar" and getattr(self, "radar_driver", None):
+            return self.radar_driver.get_jpeg_frame()
+
+        elif self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
             return self.lidar_driver.get_jpeg_frame()
 
         elif self.backend in ["v4l2_pipe", "rpicam_pipe"]:
@@ -762,7 +1067,12 @@ class SensorDriver:
         return self._generate_synthetic_frame()
 
     def release(self):
-        if self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
+        if self.backend == "radar" and getattr(self, "radar_driver", None):
+            try:
+                self.radar_driver.stop()
+            except Exception:
+                pass
+        elif self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
             try:
                 self.lidar_driver.stop()
             except Exception:

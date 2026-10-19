@@ -494,14 +494,14 @@ body {
   color: var(--text-main);
 }
 
-/* Responsive Grid: 2 columns on phone, 3 columns on computer, centered! */
+/* Responsive Grid: 2 columns on phone & desktop, centered! */
 .sensors-grid,
 .devices-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
-  max-width: 1100px;
+  max-width: 1080px;
   margin: 0 auto;
   justify-content: center;
 }
@@ -509,23 +509,17 @@ body {
 /* 1 item centered with sensible max-width */
 .sensors-grid:has(> :last-child:nth-child(1)),
 .devices-grid:has(> :last-child:nth-child(1)) {
-  max-width: 380px;
+  max-width: 520px;
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* Computer / Desktop: 3 streams per line */
+/* Computer / Desktop: 2 streams per line with comfortable spacing */
 @media (min-width: 768px) {
   .sensors-grid,
   .devices-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
-  }
-
-  /* When there are 2 streams on desktop, center them side-by-side cleanly */
-  .sensors-grid:has(> :last-child:nth-child(2)),
-  .devices-grid:has(> :last-child:nth-child(2)) {
-    max-width: 760px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    max-width: 1080px;
   }
 }
 
@@ -555,7 +549,7 @@ body {
 
 @media (min-width: 768px) {
   .device-card.multi-sensor {
-    grid-column: span 3;
+    grid-column: span 2;
   }
 }
 
