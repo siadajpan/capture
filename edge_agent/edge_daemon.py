@@ -1600,7 +1600,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 time_diff = now - p_edge.get("last_seen", 0)
                 edge_copy["last_seen_ago_s"] = int(time_diff)
                 # If seen within last 45s, mark online
-                if time_diff < 45.0:
+                if time_diff < 90.0:
                     edge_copy["online"] = True
                     p_ms = edge_copy.get("ping_ms", 20.0)
                     edge_copy["link_status"] = "excellent" if p_ms < 45 else ("good" if p_ms < 100 else "slow")
@@ -1923,7 +1923,17 @@ class EdgeDaemon:
                                 candidates.add(ip)
             except Exception:
                 pass
-            # 2. Check ARP table
+            # 2. Check dnsmasq leases and ARP table
+            for lease_path in ["/var/lib/misc/dnsmasq.leases", "/tmp/dnsmasq.leases"]:
+                if os.path.exists(lease_path):
+                    try:
+                        with open(lease_path, "r") as f:
+                            for line in f:
+                                parts = line.split()
+                                if len(parts) >= 3 and parts[2].startswith("192.168."):
+                                    candidates.add(parts[2])
+                    except Exception:
+                        pass
             if os.path.exists("/proc/net/arp"):
                 try:
                     with open("/proc/net/arp", "r") as f:
@@ -1949,7 +1959,7 @@ class EdgeDaemon:
             try:
                 url = f"http://{ip}:5001/api/status"
                 req = urllib.request.Request(url, headers={"User-Agent": "FleetScanner"})
-                with urllib.request.urlopen(req, timeout=2.5) as resp:
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
                     if resp.status == 200:
                         elapsed_ms = round((time.time() - t0) * 1000, 1)
                         data = json.loads(resp.read().decode())

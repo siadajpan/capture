@@ -2,58 +2,80 @@
   "edges": {
     "edge-pi-zero-01": {
       "device_id": "edge-pi-zero-01",
-      "device_name": "Raspberry Pi Zero v1.1 (Lab)",
-      "host": "192.168.137.35",
+      "device_name": "Pi Zero #2",
+      "host": "192.168.4.1",
       "port": 5001,
-      "url": "http://192.168.137.35:5001",
-      "online": true,
-      "last_seen": 1791991524.1845381,
+      "url": "http://192.168.4.1:5001",
+      "online": false,
+      "last_seen": 1792573274.957147,
       "sensors": [
         {
           "id": "rgb-steval",
           "modality": "rgb",
           "name": "STEVAL-55G0MBI PCB4189D (VD55G0)",
           "resolution": "640x600",
-          "fps": 15
+          "fps": 15,
+          "backend": "v4l2_pipe"
+        },
+        {
+          "id": "radar-ld2410s",
+          "modality": "radar",
+          "name": "HLK-LD2410S 24GHz mmWave Radar",
+          "resolution": "640x480",
+          "fps": 10,
+          "backend": "radar"
         }
       ],
       "collection": {
         "is_recording": false,
-        "session_id": null,
-        "session_dir": null,
+        "session_id": "2026-10-21_10-09-25",
+        "session_dir": "/home/pi/edge_data/2026-10-21/10-09-25",
         "duration_seconds": 0,
-        "frame_counts": {},
+        "frame_counts": {
+          "rgb-steval": 92,
+          "radar-ld2410s": 92
+        },
         "storage_root": "/home/pi/edge_data",
-        "disk_free_gb": 22.38,
+        "disk_free_gb": 21.96,
         "disk_total_gb": 28.05,
-        "disk_used_percent": 20.2
+        "disk_used_percent": 21.7
       },
-      "latency_ms": 464.2,
+      "latency_ms": 1342.4,
       "modalities": [
-        "rgb"
+        "rgb",
+        "radar"
       ],
       "network": {
-        "type": "hotspot",
-        "interface": "wlan0",
-        "ip": "192.168.137.35",
-        "ssid": "karol"
+        "type": "5g",
+        "interface": "usb0",
+        "ip": "192.168.8.113",
+        "ssid": null
       }
     },
     "edge-pi-zero-02": {
       "device_id": "edge-pi-zero-02",
-      "device_name": "Raspberry Pi Zero W v1.1 (#2)",
+      "device_name": "Pi Zero #3",
       "host": "192.168.137.201",
       "port": 5001,
       "url": "http://192.168.137.201:5001",
-      "online": true,
-      "last_seen": 1791991524.2277255,
+      "online": false,
+      "last_seen": 1792573409.6711905,
       "sensors": [
         {
           "id": "rgb-steval",
           "modality": "rgb",
           "name": "STEVAL-55G1 / PCB4189D (VD55G1)",
           "resolution": "804x704",
-          "fps": 15
+          "fps": 15,
+          "backend": "rpicam_pipe"
+        },
+        {
+          "id": "radar-ld2410s",
+          "modality": "radar",
+          "name": "HLK-LD2410S 24GHz mmWave Radar",
+          "resolution": "640x480",
+          "fps": 10,
+          "backend": "radar"
         }
       ],
       "collection": {
@@ -63,58 +85,73 @@
         "duration_seconds": 0,
         "frame_counts": {},
         "storage_root": "/home/pi/edge_data",
-        "disk_free_gb": 51.07,
+        "disk_free_gb": 50.88,
         "disk_total_gb": 57.97,
-        "disk_used_percent": 11.9
+        "disk_used_percent": 12.2
       },
-      "latency_ms": 507.4,
+      "latency_ms": 125.9,
       "modalities": [
-        "rgb"
+        "rgb",
+        "radar"
       ],
       "network": {
-        "type": "hotspot",
-        "interface": "wlan0",
-        "ip": "192.168.137.201",
-        "ssid": "karol"
+        "type": "5g",
+        "interface": "usb0",
+        "ip": "192.168.100.122",
+        "ssid": null
       }
     },
     "edge-pi-zero-03": {
       "device_id": "edge-pi-zero-03",
-      "device_name": "Raspberry Pi Zero (Camera v2)",
+      "device_name": "Pi Zero #1",
       "host": "192.168.137.203",
       "port": 5001,
       "url": "http://192.168.137.203:5001",
       "online": true,
-      "last_seen": 1791991525.6151507,
+      "last_seen": 1792575139.7134204,
       "sensors": [
         {
           "id": "rgb-camerav2",
           "modality": "rgb",
           "name": "Raspberry Pi Camera Module v2 (IMX219)",
           "resolution": "640x480",
-          "fps": 15
+          "fps": 15,
+          "backend": "rpicam_pipe"
+        },
+        {
+          "id": "radar-ld2410s",
+          "modality": "radar",
+          "name": "HLK-LD2410S 24GHz mmWave Radar",
+          "resolution": "640x480",
+          "fps": 10,
+          "backend": "radar"
         }
       ],
       "modalities": [
-        "rgb"
+        "rgb",
+        "radar"
       ],
       "collection": {
         "is_recording": false,
-        "session_id": null,
-        "session_dir": null,
+        "session_id": "2026-10-21_09-28-55",
+        "session_dir": "/home/pi/edge_data/2026-10-21/09-28-55",
         "duration_seconds": 0,
-        "frame_counts": {},
+        "frame_counts": {
+          "rgb-camerav2": 63,
+          "radar-ld2410s": 63
+        },
         "storage_root": "/home/pi/edge_data",
-        "disk_free_gb": 53.55,
+        "disk_free_gb": 53.5,
         "disk_total_gb": 57.99,
-        "disk_used_percent": 7.7
+        "disk_used_percent": 7.8
       },
       "network": {
         "type": "hotspot",
         "interface": "wlan0",
         "ip": "192.168.137.203",
         "ssid": "karol"
-      }
+      },
+      "latency_ms": 43.1
     },
     "edge-pi-4b": {
       "device_id": "edge-pi-4b",
@@ -122,7 +159,7 @@
       "host": "192.168.137.204",
       "port": 5001,
       "url": "http://192.168.137.204:5001",
-      "online": true,
+      "online": false,
       "last_seen": 1791991525.0,
       "sensors": [
         {

@@ -149,15 +149,16 @@ async def ping_edge(device_id: str, edge_data: dict, session: aiohttp.ClientSess
 
 
 def get_hotspot_client_ips():
-    """Finds all client IPs in ARP table on the mobile hotspot subnet (192.168.137.x)."""
-    ips = []
+    """Finds all client IPs in ARP table on the mobile hotspot subnet (192.168.137.x or 192.168.4.x)."""
+    ips = ["192.168.4.1"]
     try:
         import subprocess
         out = subprocess.check_output("arp -a", shell=True, text=True, timeout=2)
         in_hotspot_section = False
+        target_subnets = ("192.168.137.", "192.168.4.")
         for line in out.splitlines():
             line_str = line.strip()
-            if "192.168.137." in line_str and "Interface:" in line_str:
+            if any(s in line_str for s in target_subnets) and "Interface:" in line_str:
                 in_hotspot_section = True
                 continue
             elif "Interface:" in line_str:
@@ -165,9 +166,9 @@ def get_hotspot_client_ips():
             
             if in_hotspot_section:
                 parts = line_str.split()
-                if len(parts) >= 2 and parts[0].startswith("192.168.137."):
+                if len(parts) >= 2 and any(parts[0].startswith(s) for s in target_subnets):
                     ip = parts[0]
-                    if ip not in ["192.168.137.1", "192.168.137.255"]:
+                    if ip not in ["192.168.137.1", "192.168.137.255", "192.168.4.255"] and ip not in ips:
                         ips.append(ip)
     except Exception:
         pass

@@ -1997,7 +1997,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       function renderByModality() {
         const modalitiesMap = {};
         state.edges.forEach(edge => {
-          if (!edge.online) return;
+          if (!edge.online && (edge.last_seen_ago_s || 0) > 600) return;
           (edge.sensors || []).forEach(sensor => {
             const mod = (sensor.modality || 'other').toLowerCase();
             if (state.selectedModalityFilter !== 'all' && mod !== state.selectedModalityFilter) return;
