@@ -839,6 +839,55 @@ body {
   box-shadow: 0 0 8px rgba(255, 23, 68, 0.45);
 }
 
+.sensor-refresh-btn-large {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: none;
+  outline: none;
+  color: #38bdf8;
+  border-radius: 50%;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  padding: 0;
+}
+
+.sensor-refresh-btn-large svg {
+  width: 22px;
+  height: 22px;
+  stroke: #38bdf8;
+  transition: transform 0.2s ease, stroke 0.2s ease;
+}
+
+.sensor-refresh-btn-large:hover {
+  background: rgba(30, 41, 59, 0.9);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.6), 0 4px 16px rgba(0, 0, 0, 0.6);
+  transform: scale(1.12);
+}
+
+.sensor-refresh-btn-large:hover svg {
+  stroke: #7dd3fc;
+}
+
+.sensor-refresh-btn-large:active,
+.sensor-refresh-btn-large.refreshing svg {
+  animation: spin-refresh 0.7s linear infinite;
+  stroke: #00e5ff;
+}
+
+@keyframes spin-refresh {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+
 .feed-overlay-top-left {
   position: absolute;
   top: 8px;

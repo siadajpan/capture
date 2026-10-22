@@ -697,9 +697,7 @@ class HLKLD2410SDriver:
             unit_y = num_y + num_h - 44
             draw.text((unit_x, unit_y), dist_unit_str, fill=(148, 163, 184), font=font_unit)
 
-            lbl_str = f"({dist_cm} cm)"
-            lbl_w, _ = _text_size(lbl_str, font_sub)
-            draw.text(((w - lbl_w) // 2, num_y + num_h + 24), lbl_str, fill=(148, 163, 184), font=font_sub)
+
 
         else:
             standby_str = "--"
