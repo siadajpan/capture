@@ -421,7 +421,7 @@ class HLKLD2410SDriver:
         self.cfg = cfg
         self.port = cfg.get("device", "/dev/serial0")
         self.baudrate = cfg.get("baudrate", 115200)
-        self.presence_pin = cfg.get("gpio_presence", 18)
+        self.presence_pin = cfg.get("gpio_presence", cfg.get("status_pin", 18))
         self.width = cfg.get("width", 640)
         self.height = cfg.get("height", 480)
         self.fps = cfg.get("fps", 10)
@@ -522,7 +522,39 @@ class HLKLD2410SDriver:
                         buf.extend(chunk)
 
                         # Process buffer
-                        while len(buf) >= 5:
+                        while len(buf) >= 2:
+                            # 0. Check for ASCII lines (e.g. "ON\r\n", "Range 134\r\n", "OFF\r\n")
+                            if b'\n' in buf and not buf.startswith(STD_HEADER) and buf[0] != MINI_HEADER:
+                                nl_pos = buf.index(b'\n')
+                                raw_line = bytes(buf[:nl_pos]).decode('utf-8', errors='ignore').strip()
+                                buf = buf[nl_pos + 1:]
+                                if raw_line:
+                                    parts = raw_line.split()
+                                    if parts and parts[0].lower() == "range" and len(parts) >= 2 and parts[1].isdigit():
+                                        dist = int(parts[1])
+                                        with self.lock:
+                                            self.target_detected = (dist > 0)
+                                            self.distance_cm = dist if dist > 0 else None
+                                            self.state_str = f"Target Detected ({dist}cm)" if dist > 0 else "Standby (No Target)"
+                                            self.last_update_time = time.time()
+                                            self.packets_received += 1
+                                    elif raw_line.lower() in ["on", "moving"]:
+                                        with self.lock:
+                                            self.target_detected = True
+                                            self.last_update_time = time.time()
+                                            self.packets_received += 1
+                                    elif raw_line.lower() in ["off", "dis", "standby"]:
+                                        with self.lock:
+                                            self.target_detected = False
+                                            self.distance_cm = None
+                                            self.state_str = "Standby (No Target)"
+                                            self.last_update_time = time.time()
+                                            self.packets_received += 1
+                                continue
+
+                            if len(buf) < 5:
+                                break
+
                             # 1. Minimalist frame: 0x6E [state:1] [dist_low:1] [dist_high:1] ... 0x62
                             if buf[0] == MINI_HEADER:
                                 try:
@@ -578,6 +610,7 @@ class HLKLD2410SDriver:
 
     def _get_font(self, size, bold=False):
         candidate_paths = [
+            "/home/pi/arialbd.ttf" if bold else "/home/pi/arial.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -610,48 +643,22 @@ class HLKLD2410SDriver:
             pkt_cnt = self.packets_received
             last_up = self.last_update_time
 
-        # If no packet received in last 2.5s and target was detected, check timeout
         if time.time() - last_up > 2.5 and detected:
             if not self.has_gpio:
                 detected = False
                 dist_cm = None
-                st_text = "Standby (No Target)"
+                st_text = "Standby"
 
         w = self.width
         h = self.height
-        img = Image.new("RGB", (w, h), color=(13, 17, 23)) # Clean deep dark matte
+        img = Image.new("RGB", (w, h), color=(13, 17, 23))
         draw = ImageDraw.Draw(img)
 
-        font_giant = self._get_font(104, bold=True)
-        font_unit  = self._get_font(32, bold=True)
-        font_sub   = self._get_font(16, bold=False)
-        font_badge = self._get_font(14, bold=True)
+        font_giant = self._get_font(118, bold=True)
+        font_unit  = self._get_font(36, bold=True)
+        font_sub   = self._get_font(18, bold=False)
+        font_badge = self._get_font(13, bold=True)
         font_meta  = self._get_font(12, bold=False)
-
-        # 1. Top Header Bar
-        draw.rectangle([0, 0, w, 48], fill=(18, 24, 34))
-        draw.line([0, 48, w, 48], fill=(30, 41, 59), width=1)
-
-        draw.text((20, 16), "HLK-LD2410S", fill=(241, 245, 249), font=font_badge)
-        draw.text((130, 17), "•  24GHz mmWave Presence Radar", fill=(100, 116, 139), font=font_meta)
-
-        # Presence Badge
-        if detected:
-            badge_border = (16, 185, 129)
-            badge_bg = (6, 78, 59)
-            badge_text = "● PRESENCE DETECTED"
-            badge_txt_col = (52, 211, 153)
-        else:
-            badge_border = (71, 85, 105)
-            badge_bg = (30, 41, 59)
-            badge_text = "○ STANDBY (CLEAR)"
-            badge_txt_col = (148, 163, 184)
-
-        bw, bh = 170, 26
-        bx = w - bw - 18
-        by = 11
-        draw.rectangle([bx, by, bx + bw, by + bh], fill=badge_bg, outline=badge_border, width=1)
-        draw.text((bx + 14, by + 5), badge_text, fill=badge_txt_col, font=font_badge)
 
         def _text_size(txt, fnt):
             if hasattr(draw, "textbbox"):
@@ -659,10 +666,18 @@ class HLKLD2410SDriver:
                 return bb[2] - bb[0], bb[3] - bb[1]
             return draw.textsize(txt, font=fnt)
 
-        # 2. Main Hero Distance Centerpiece (Minimalist)
-        center_y = int(h * 0.44)
+        # 1. Header Bar: Move description to the far right so top-left overlay buttons have plenty of room
+        draw.rectangle([0, 0, w, 40], fill=(18, 24, 34))
+        draw.line([0, 40, w, 40], fill=(30, 41, 59), width=1)
 
-        if detected and dist_cm is not None and dist_cm > 0:
+        hdr_label = "HLK-LD2410S Radar"
+        hw_w, _ = _text_size(hdr_label, font_badge)
+        draw.text((w - hw_w - 16, 12), hdr_label, fill=(148, 163, 184), font=font_badge)
+
+        # 2. Main Hero Distance Centerpiece (ONLY distance reading, no presence badge, no slider bar)
+        center_y = int(h * 0.48)
+
+        if dist_cm is not None and dist_cm > 0:
             d_m = dist_cm / 100.0
             dist_main_str = f"{d_m:.2f}"
             dist_unit_str = "m"
@@ -671,63 +686,39 @@ class HLKLD2410SDriver:
             num_w, num_h = _text_size(dist_main_str, font_giant)
             unit_w, _ = _text_size(dist_unit_str, font_unit)
 
-            total_w = num_w + 12 + unit_w
+            total_w = num_w + 14 + unit_w
             start_x = (w - total_w) // 2
 
             num_x = start_x
-            num_y = center_y - (num_h // 2) - 10
+            num_y = center_y - (num_h // 2) - 15
             draw.text((num_x, num_y), dist_main_str, fill=(56, 189, 248), font=font_giant)
 
-            unit_x = num_x + num_w + 12
-            unit_y = num_y + num_h - 42
+            unit_x = num_x + num_w + 14
+            unit_y = num_y + num_h - 44
             draw.text((unit_x, unit_y), dist_unit_str, fill=(148, 163, 184), font=font_unit)
 
-            lbl_str = f"DISTANCE TO TARGET  ({cm_sub_str})"
+            lbl_str = f"({dist_cm} cm)"
             lbl_w, _ = _text_size(lbl_str, font_sub)
-            draw.text(((w - lbl_w) // 2, num_y + num_h + 16), lbl_str, fill=(148, 163, 184), font=font_sub)
+            draw.text(((w - lbl_w) // 2, num_y + num_h + 24), lbl_str, fill=(148, 163, 184), font=font_sub)
 
         else:
             standby_str = "--"
             num_w, num_h = _text_size(standby_str, font_giant)
-            draw.text(((w - num_w) // 2, center_y - (num_h // 2) - 25), standby_str, fill=(71, 85, 105), font=font_giant)
+            draw.text(((w - num_w) // 2, center_y - (num_h // 2) - 20), standby_str, fill=(71, 85, 105), font=font_giant)
 
-            lbl_str = "NO TARGET IN RANGE"
+            lbl_str = "STANDBY"
             lbl_w, _ = _text_size(lbl_str, font_sub)
-            draw.text(((w - lbl_w) // 2, center_y + (num_h // 2) + 20), lbl_str, fill=(100, 116, 139), font=font_sub)
+            draw.text(((w - lbl_w) // 2, center_y + (num_h // 2) + 16), lbl_str, fill=(100, 116, 139), font=font_sub)
 
-        # 3. Minimalist Horizontal Range Bar (0m to 6m)
-        bar_w = 460
-        bar_x = (w - bar_w) // 2
-        bar_y = h - 105
-        bar_h = 6
+        # 3. Bottom Footer Bar
+        draw.rectangle([0, h - 36, w, h], fill=(18, 24, 34))
+        draw.line([0, h - 36, w, h - 36], fill=(30, 41, 59), width=1)
 
-        draw.rectangle([bar_x, bar_y, bar_x + bar_w, bar_y + bar_h], fill=(30, 41, 59))
+        draw.text((20, h - 25), f"PKTS: {pkt_cnt}", fill=(100, 116, 139), font=font_meta)
+        clock_str = time.strftime("%H:%M:%S")
+        draw.text((w - 75, h - 25), clock_str, fill=(100, 116, 139), font=font_meta)
 
-        for m in range(7):
-            tx = bar_x + int((m / 6.0) * bar_w)
-            draw.line([tx, bar_y - 3, tx, bar_y + bar_h + 3], fill=(51, 65, 85), width=1)
-            tlbl = f"{m}m"
-            tw, _ = _text_size(tlbl, font_meta)
-            draw.text((tx - tw // 2, bar_y + bar_h + 6), tlbl, fill=(71, 85, 105), font=font_meta)
-
-        if detected and dist_cm is not None and dist_cm > 0:
-            d_m = dist_cm / 100.0
-            clamp_m = max(0.0, min(d_m, 6.0))
-            target_x = bar_x + int((clamp_m / 6.0) * bar_w)
-            draw.rectangle([bar_x, bar_y, target_x, bar_y + bar_h], fill=(14, 165, 233))
-            draw.ellipse([target_x - 8, bar_y - 5, target_x + 8, bar_y + bar_h + 5], fill=(56, 189, 248), outline=(255, 255, 255), width=1)
-
-        # 4. Bottom Footer Bar
-        draw.rectangle([0, h - 42, w, h], fill=(18, 24, 34))
-        draw.line([0, h - 42, w, h - 42], fill=(30, 41, 59), width=1)
-
-        state_disp = st_text if detected else "Scanning..."
-        draw.text((20, h - 28), f"STATUS: {state_disp.upper()}", fill=(148, 163, 184), font=font_meta)
-        draw.text((w // 2 - 40, h - 28), f"PACKETS: {pkt_cnt}", fill=(100, 116, 139), font=font_meta)
-
-        clock_str = time.strftime("%Y-%m-%d %H:%M:%S")
-        draw.text((w - 150, h - 28), clock_str, fill=(100, 116, 139), font=font_meta)
-
+        import io
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
         return buf.getvalue()
@@ -1946,10 +1937,12 @@ class EdgeDaemon:
                                     candidates.add(ip)
                 except Exception:
                     pass
-            # 3. Add dynamic hotspot pool IPs (CaptureFleet 192.168.4.10-29 and 4G-UFI-C12 192.168.100.100-115)
-            for i in range(10, 30):
+            # 3. Add known fleet node IPs and dynamic pools
+            for ip in ["192.168.4.39", "192.168.4.201", "192.168.4.202", "192.168.4.203", "192.168.4.204", "192.168.137.35", "192.168.137.142", "192.168.137.201", "192.168.137.203"]:
+                candidates.add(ip)
+            for i in range(10, 60):
                 candidates.add(f"192.168.4.{i}")
-            for i in range(100, 116):
+            for i in range(100, 130):
                 candidates.add(f"192.168.100.{i}")
             return list(candidates)
 
@@ -1958,7 +1951,7 @@ class EdgeDaemon:
             try:
                 url = f"http://{ip}:5001/api/status"
                 req = urllib.request.Request(url, headers={"User-Agent": "FleetScanner"})
-                with urllib.request.urlopen(req, timeout=1.8) as resp:
+                with urllib.request.urlopen(req, timeout=2.5) as resp:
                     if resp.status == 200:
                         elapsed_ms = round((time.time() - t0) * 1000, 1)
                         data = json.loads(resp.read().decode())

@@ -395,13 +395,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           console.warn('Could not load /config.json:', e);
         }
 
-        const defaultHub = clientConfig?.default_hub_url || (
-          (window.location.port === '8000') 
-            ? window.location.origin 
-            : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-              ? 'http://127.0.0.1:8000'
-              : 'https://marvel-reconstruction-atm-planning.trycloudflare.com'
-        );
+        let defaultHub;
+        if (window.location.port === '8000' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.startsWith('192.168.')) {
+          defaultHub = window.location.origin;
+        } else {
+          defaultHub = clientConfig?.default_hub_url || 'https://fleet.capture.me.uk';
+        }
 
         let savedHub = localStorage.getItem('capture_hub_url');
         if (savedHub && (savedHub.includes('192.168.41.78') || savedHub.includes('192.168.1.100') || savedHub.includes('192.168.1.150') || savedHub.includes('lynn-oak'))) {
@@ -1052,11 +1051,15 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         const now = Date.now();
         const fKey = `${deviceId}:${target}`;
         state.snapshotTimestamps[fKey] = now;
-        const isSensorLive = state.liveStreamingActive || Boolean(state.sensorLiveTimers && state.sensorLiveTimers[fKey]);
+        const btn = document.getElementById(`live-btn-${deviceId}-${target}`);
+        if (btn) btn.classList.add('refreshing');
         const img = document.getElementById(`feed-img-${deviceId}-${target}`);
-        if (img && !isSensorLive) {
+        if (img) {
           img.src = `${hubBaseUrl}/proxy/snapshot/${deviceId}/${target}?t=${now}`;
+          img.onload = () => { if (btn) btn.classList.remove('refreshing'); };
+          img.onerror = () => { if (btn) btn.classList.remove('refreshing'); };
         }
+        setTimeout(() => { if (btn) btn.classList.remove('refreshing'); }, 1200);
         updateRelativeTimestamps();
       };
 
@@ -1934,7 +1937,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               }
               if (btn1) {
                 btn1.classList.remove('active');
-                btn1.textContent = '▶ Live';
+                btn1.textContent = '🔄';
               }
               if (btn2) {
                 btn2.classList.remove('active');
@@ -1950,10 +1953,11 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         state.edges.forEach(edge => {
           const isOnline = edge.online;
           const isGateway = Boolean(edge.is_gateway);
+          const has4G = Boolean(isGateway || (edge.network && (edge.network.type === '5g' || edge.network.type === '4g' || (edge.network.interface && edge.network.interface.startsWith('usb')))));
           const pingVal = edge.ping_ms;
-          const linkStatus = edge.link_status || (isGateway ? 'gateway' : (isOnline ? 'good' : 'offline'));
-          const pingLabel = isGateway ? '4G Gateway' : (pingVal !== undefined ? `${pingVal}ms` : (isOnline ? 'Active' : 'Offline'));
-          const pingIcon = isGateway ? '📶' : (isOnline ? '⚡' : '⚪');
+          const linkStatus = edge.link_status || (has4G ? 'gateway' : (isOnline ? 'good' : 'offline'));
+          const pingLabel = isGateway ? '4G Gateway' : (has4G ? '4G Cellular' : (pingVal !== undefined ? `${pingVal}ms` : (isOnline ? 'Active' : 'Offline')));
+          const pingIcon = has4G ? '📶' : (isOnline ? '⚡' : '⚪');
 
           const sensors = edge.sensors || [];
           const col = edge.collection || {};
@@ -2050,9 +2054,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         const isRec = edge.collection && edge.collection.is_recording;
         const frameCount = (edge.collection && edge.collection.frame_counts && edge.collection.frame_counts[sensor.id]) || 0;
         const isGateway = Boolean(edge.is_gateway);
-        const linkStatus = edge.link_status || (isGateway ? 'gateway' : (edge.online ? 'good' : 'offline'));
-        const pingChip = isGateway 
-          ? `<span class="ping-badge gateway" style="font-size:0.6rem; padding:1px 5px;" title="Master 4G Gateway"><span class="ping-dot"></span>4G</span>`
+        const has4G = Boolean(isGateway || (edge.network && (edge.network.type === '5g' || edge.network.type === '4g' || (edge.network.interface && edge.network.interface.startsWith('usb')))));
+        const linkStatus = edge.link_status || (has4G ? 'gateway' : (edge.online ? 'good' : 'offline'));
+        const pingChip = has4G 
+          ? `<span class="ping-badge gateway" style="font-size:0.6rem; padding:1px 5px;" title="${isGateway ? 'Master 4G Gateway' : '4G Dongle Cellular'}"><span class="ping-dot"></span>4G</span>`
           : (edge.ping_ms !== undefined 
               ? `<span class="ping-badge ${linkStatus}" style="font-size:0.6rem; padding:1px 5px;" title="Ping to Gateway: ${edge.ping_ms}ms"><span class="ping-dot"></span>${edge.ping_ms}ms</span>` 
               : '');
@@ -2075,16 +2080,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               ${edge.online ? `
                 <img src="${currentSrc}" alt="${sensor.name}" id="feed-img-${edge.device_id}-${target}" loading="lazy">
                 <div class="feed-overlay-top-left">
-                  <div class="${isLive ? 'live-stream-badge-overlay' : 'snapshot-badge-overlay'}" id="badge-${edge.device_id}-${target}">
-                    ${isLive ? `
-                      <span class="live-pulse-dot"></span>
-                      <span>LIVE (${remSec}s)</span>
-                    ` : `
-                      <span>${frameAge}</span>
-                    `}
-                  </div>
-                  <button type="button" class="sensor-live-mini-btn ${isLive ? 'active' : ''}" id="live-btn-${edge.device_id}-${target}" onclick="window.toggleSensorLive('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Toggle Live Video Stream">
-                    ${isLive ? `⏹ ${remSec}s` : '▶ Live'}
+                  <button type="button" class="sensor-refresh-btn-large" id="live-btn-${edge.device_id}-${target}" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Refresh single frame">
+                    🔄
                   </button>
                 </div>
               ` : `
@@ -2099,17 +2096,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             </div>
 
             <div class="feed-footer">
-              <div style="display:inline-flex; align-items:center; gap:6px;">
-                <span id="ts-${edge.device_id}-${target}" title="${ts ? 'Captured at: ' + new Date(ts).toLocaleTimeString() : ''}">
-                  ${isLive ? `${sensor.fps || 15} fps (Live)` : frameAge}
-                </span>
-                <button type="button" class="sensor-live-mini-btn ${isLive ? 'active' : ''}" id="live-btn-foot-${edge.device_id}-${target}" onclick="window.toggleSensorLive('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Toggle Live Stream">
-                  ${isLive ? `⏹ ${remSec}s` : '▶ Live'}
-                </button>
-                <button type="button" class="sensor-live-mini-btn" onclick="window.requestSensorSnapshot('${escapeHtml(edge.device_id)}', '${escapeHtml(target)}', event)" title="Refresh single frame">
-                  🔄
-                </button>
-              </div>
+              <span></span>
               <span>${isRec ? `<span class="rec-pulse-chip">⏺ #${frameCount}</span>` : 'READY'}</span>
             </div>
           </div>
@@ -2224,13 +2211,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             : 'SD Card storage ready';
 
           const isGateway = Boolean(edge.is_gateway);
+          const has4G = Boolean(isGateway || (edge.network && (edge.network.type === '5g' || edge.network.type === '4g' || (edge.network.interface && edge.network.interface.startsWith('usb')))));
           const pingVal = edge.ping_ms;
           const pingLabel = isGateway ? '0ms (Gateway)' : (pingVal !== undefined ? `${pingVal}ms ping` : 'Active');
           const lastSeenStr = edge.last_seen 
             ? timeAgo(edge.last_seen)
             : 'Never';
           const linkBadgeText = isOnline 
-            ? (isGateway ? `📶 4G GATEWAY` : `🟢 ${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`)
+            ? (isGateway ? `📶 4G GATEWAY` : (has4G ? `📶 4G CELLULAR (${pingLabel})` : `🟢 ${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`))
             : `⚪ OFFLINE (${lastSeenStr})`;
 
           return `
