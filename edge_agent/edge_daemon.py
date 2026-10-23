@@ -1554,52 +1554,6 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "Not Found")
 
-    def get_hotspot_status(self):
-        try:
-            p = subprocess.run(["pgrep", "-x", "hostapd"], stdout=subprocess.PIPE, text=True)
-            return bool(p.stdout.strip())
-        except Exception:
-            return True
-
-    def set_hotspot_state(self, enabled: bool):
-        action = "start" if enabled else "stop"
-        try:
-            if os.path.exists("/home/pi/toggle_fleet_hotspot.sh"):
-                subprocess.run(["sudo", "/home/pi/toggle_fleet_hotspot.sh", action], check=False)
-            elif enabled:
-                subprocess.run(["sudo", "systemctl", "start", "hostapd"], check=False)
-            else:
-                subprocess.run(["sudo", "pkill", "-9", "hostapd"], check=False)
-                subprocess.run(["sudo", "pkill", "-9", "dnsmasq"], check=False)
-
-            # If UZ801 dongle is present, also update modem WiFi
-            wifi_stat = "1" if enabled else "0"
-            try:
-                urllib.request.urlopen(
-                    urllib.request.Request(
-                        "http://192.168.100.1/ajax",
-                        data=b'{"funcNo":1000,"username":"admin","password":"admin"}',
-                        headers={"Content-Type": "application/json"},
-                        method="POST"
-                    ),
-                    timeout=2
-                )
-                urllib.request.urlopen(
-                    urllib.request.Request(
-                        "http://192.168.100.1/ajax",
-                        data=json.dumps({"funcNo": 1007, "wifi_status": wifi_stat}).encode(),
-                        headers={"Content-Type": "application/json"},
-                        method="POST"
-                    ),
-                    timeout=3
-                )
-            except Exception:
-                pass
-        except Exception as ex:
-            logger.warning(f"Error setting hotspot state: {ex}")
-
-        return {"status": "ok", "hotspot_enabled": self.get_hotspot_status()}
-
     def _proxy_peer_request(self, rel_path, dev_id):
         peer_ip = self.daemon_ref.peer_ips.get(dev_id)
         if not peer_ip:
@@ -1942,6 +1896,54 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
 
 
 class EdgeDaemon:
+    def get_hotspot_status(self):
+        if os.path.exists("/home/pi/.hotspot_disabled"):
+            return False
+        try:
+            p = subprocess.run(["pgrep", "-x", "hostapd"], stdout=subprocess.PIPE, text=True)
+            return bool(p.stdout.strip())
+        except Exception:
+            return True
+
+    def set_hotspot_state(self, enabled: bool):
+        action = "start" if enabled else "stop"
+        try:
+            if os.path.exists("/home/pi/toggle_fleet_hotspot.sh"):
+                subprocess.run(["sudo", "/home/pi/toggle_fleet_hotspot.sh", action], check=False)
+            elif enabled:
+                subprocess.run(["sudo", "systemctl", "start", "hostapd"], check=False)
+            else:
+                subprocess.run(["sudo", "pkill", "-9", "hostapd"], check=False)
+                subprocess.run(["sudo", "pkill", "-9", "dnsmasq"], check=False)
+
+            # If UZ801 dongle is present, also update modem WiFi
+            wifi_stat = "1" if enabled else "0"
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        "http://192.168.100.1/ajax",
+                        data=b'{"funcNo":1000,"username":"admin","password":"admin"}',
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    ),
+                    timeout=2
+                )
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        "http://192.168.100.1/ajax",
+                        data=json.dumps({"funcNo": 1007, "wifi_status": wifi_stat}).encode(),
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    ),
+                    timeout=3
+                )
+            except Exception:
+                pass
+        except Exception as ex:
+            logger.warning(f"Error setting hotspot state: {ex}")
+
+        return {"status": "ok", "hotspot_enabled": self.get_hotspot_status()}
+
     def __init__(self, config=None):
         self.config = config or load_config()
         self.sensors = [SensorDriver(sc) for sc in self.config.get("sensors", [])]
