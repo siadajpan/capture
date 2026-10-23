@@ -2458,14 +2458,16 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             btn.disabled = true;
             btn.textContent = 'Updating...';
           }
-          const res = await fetch(`${hubBaseUrl}/api/edges/${deviceId}/hotspot`, {
+          const edge = state.edges.find(e => e.device_id === deviceId);
+          const targetBase = (edge && edge.tunnel_url) ? edge.tunnel_url : hubBaseUrl;
+          const url = (edge && edge.tunnel_url) ? ${targetBase}/api/hotspot : ${hubBaseUrl}/api/edges//hotspot;
+          const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ enabled: targetState })
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           const data = await res.json();
-          const edge = state.edges.find(e => e.device_id === deviceId);
           if (edge) {
             edge.hotspot_enabled = data.hotspot_enabled !== false;
           }
