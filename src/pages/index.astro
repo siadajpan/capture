@@ -385,6 +385,29 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       let clientConfig = null;
       let hubBaseUrl = '';
 
+      const FLEET_NODE_DEFAULTS = [
+        { id: "edge-pi-zero-01", name: "Pi Zero #2", url: "https://fleet.capture.me.uk" },
+        { id: "edge-pi-zero-03", name: "Pi Zero #1", url: "https://fleet1.capture.me.uk" },
+        { id: "edge-pi-zero-02", name: "Pi Zero #3", url: "https://fleet3.capture.me.uk" }
+      ];
+
+      function getStreamUrl(edge, target) {
+        if (edge && edge.tunnel_url) {
+          return `${edge.tunnel_url}/api/stream/${target}`;
+        }
+        const devId = edge ? edge.device_id : '';
+        return `${hubBaseUrl}/proxy/stream/${devId}/${target}`;
+      }
+
+      function getSnapshotUrl(edge, target, ts) {
+        const tParam = ts ? `?t=${ts}` : '';
+        if (edge && edge.tunnel_url) {
+          return `${edge.tunnel_url}/api/snapshot/${target}${tParam}`;
+        }
+        const devId = edge ? edge.device_id : '';
+        return `${hubBaseUrl}/proxy/snapshot/${devId}/${target}${tParam}`;
+      }
+
       async function loadClientConfig() {
         try {
           const res = await fetch('/config.json?v=' + Date.now());
@@ -840,12 +863,102 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       }
 
       async function pollData() {
+        const configuredNodes = (clientConfig && clientConfig.fleet_nodes && clientConfig.fleet_nodes.length > 0)
+          ? clientConfig.fleet_nodes
+          : FLEET_NODE_DEFAULTS;
+
+        const queryTargets = [...configuredNodes];
+        if (hubBaseUrl && !queryTargets.some(n => n.url === hubBaseUrl)) {
+          queryTargets.push({ id: 'custom-hub', name: 'Custom Hub', url: hubBaseUrl });
+        }
+
         try {
-          const res = await fetch(`${hubBaseUrl}/api/edges`);
-          if (!res.ok) throw new Error('Status ' + res.status);
-          const data = await res.json();
-          state.edges = data.edges || [];
-          state.displayEnabled = data.display_enabled;
+          const results = await Promise.allSettled(
+            queryTargets.map(async node => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3500);
+              try {
+                const res = await fetch(`${node.url}/api/edges`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                return { node, data };
+              } catch (err) {
+                clearTimeout(timeoutId);
+                try {
+                  const c2 = new AbortController();
+                  const t2 = setTimeout(() => c2.abort(), 2500);
+                  const res2 = await fetch(`${node.url}/api/status`, { signal: c2.signal });
+                  clearTimeout(t2);
+                  if (res2.ok) {
+                    const statusData = await res2.json();
+                    return {
+                      node,
+                      data: {
+                        display_enabled: true,
+                        edges: [{
+                          ...statusData,
+                          is_gateway: true,
+                          online: true,
+                          last_seen: Date.now() / 1000
+                        }]
+                      }
+                    };
+                  }
+                } catch (_) {}
+                throw err;
+              }
+            })
+          );
+
+          let anySuccess = false;
+          const mergedEdges = new Map();
+
+          results.forEach(r => {
+            if (r.status === 'fulfilled' && r.value && r.value.data) {
+              anySuccess = true;
+              const { node, data } = r.value;
+              if (data.display_enabled !== undefined) {
+                state.displayEnabled = data.display_enabled;
+              }
+              const edgeList = Array.isArray(data.edges) ? data.edges : [];
+              edgeList.forEach(edge => {
+                if (!edge || !edge.device_id) return;
+                if (edge.device_id === node.id || (!edge.tunnel_url && edgeList.length === 1)) {
+                  edge.tunnel_url = node.url;
+                }
+                const existing = mergedEdges.get(edge.device_id);
+                if (!existing) {
+                  mergedEdges.set(edge.device_id, edge);
+                } else {
+                  if (!existing.tunnel_url && edge.tunnel_url) {
+                    mergedEdges.set(edge.device_id, edge);
+                  } else if (edge.online && !existing.online) {
+                    mergedEdges.set(edge.device_id, edge);
+                  }
+                }
+              });
+            }
+          });
+
+          configuredNodes.forEach(node => {
+            if (!mergedEdges.has(node.id)) {
+              mergedEdges.set(node.id, {
+                device_id: node.id,
+                device_name: node.name || node.id,
+                online: false,
+                tunnel_url: node.url,
+                sensors: [],
+                modalities: []
+              });
+            }
+          });
+
+          if (!anySuccess) {
+            throw new Error('All fleet tunnel queries failed');
+          }
+
+          state.edges = Array.from(mergedEdges.values());
           state.pollFailCount = 0;
 
           updateHUD();
@@ -862,12 +975,11 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             el.fleetHealthText.textContent = `⚠️ Syncing (${state.pollFailCount})...`;
           }
 
-          // Resilient display: Only wipe viewport if we have ZERO previous feeds and failed consecutively at least 2 times
           if ((!state.edges || state.edges.length === 0) && state.pollFailCount >= 2) {
             const defaultUrl = clientConfig?.default_hub_url || 'https://fleet.capture.me.uk';
             el.feedsViewport.innerHTML = `
               <div class="empty-state">
-                <p>Cannot reach Edge Hub at <code>${escapeHtml(hubBaseUrl)}</code></p>
+                <p>Cannot reach Edge Hubs or Tunnels</p>
                 <div style="display:flex; gap:8px; justify-content:center; margin-top:12px; flex-wrap:wrap;">
                   <button class="submit-btn" onclick="window.setQuickHub('${defaultUrl}')">Connect Default Server Tunnel</button>
                   <button class="submit-btn" style="background:rgba(255,255,255,0.1);" onclick="document.getElementById('openMenuBtn').click()">Open Menu / Settings</button>
@@ -1036,7 +1148,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             state.snapshotTimestamps[fKey] = now;
             const img = document.getElementById(`feed-img-${edge.device_id}-${target}`);
             if (img && !state.liveStreamingActive) {
-              img.src = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}?t=${now}`;
+              img.src = getSnapshotUrl(edge, target, now);
             }
           });
         });
@@ -1055,7 +1167,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         if (btn) btn.classList.add('refreshing');
         const img = document.getElementById(`feed-img-${deviceId}-${target}`);
         if (img) {
-          img.src = `${hubBaseUrl}/proxy/snapshot/${deviceId}/${target}?t=${now}`;
+          const edge = state.edges.find(e => e.device_id === deviceId);
+          img.src = getSnapshotUrl(edge || { device_id: deviceId }, target, now);
           img.onload = () => { if (btn) btn.classList.remove('refreshing'); };
           img.onerror = () => { if (btn) btn.classList.remove('refreshing'); };
         }
@@ -1143,12 +1256,22 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       async function toggleCollection() {
         const endpoint = state.isRecording ? '/api/collection/stop' : '/api/collection/start';
         const label = el.recSessionLabelInput ? el.recSessionLabelInput.value.trim() : 'capture.me.uk Session';
+        
+        const targetUrls = new Set();
+        state.edges.forEach(e => {
+          if (e.online && e.tunnel_url) targetUrls.add(e.tunnel_url);
+        });
+        if (hubBaseUrl) targetUrls.add(hubBaseUrl);
+
         try {
-          await fetch(`${hubBaseUrl}${endpoint}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ label: label || 'capture.me.uk Session' })
-          });
+          const promises = Array.from(targetUrls).map(url =>
+            fetch(`${url}${endpoint}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ label: label || 'capture.me.uk Session' })
+            }).catch(e => console.warn(`Recording toggle failed on ${url}:`, e))
+          );
+          await Promise.allSettled(promises);
           await pollData();
         } catch (e) {
           console.error(e);
@@ -1906,7 +2029,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               : ((state.sensorLiveRemaining && state.sensorLiveRemaining[fKey]) || 10);
 
             if (isLive) {
-              const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
+              const streamUrl = getStreamUrl(edge, target);
               if (img && img.src !== streamUrl) img.src = streamUrl;
               if (badge) {
                 badge.className = 'live-stream-badge-overlay';
@@ -1924,7 +2047,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             } else {
               const ts = state.snapshotTimestamps[fKey] || Date.now();
               state.snapshotTimestamps[fKey] = ts;
-              const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}?t=${ts}`;
+              const snapshotUrl = getSnapshotUrl(edge, target, ts);
               if (img) img.src = snapshotUrl;
               const ageStr = formatFrameAge(ts);
               if (badge) {
@@ -2043,9 +2166,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           ? state.streamTimeRemaining
           : ((state.sensorLiveRemaining && state.sensorLiveRemaining[fKey]) || 10);
 
-        const streamUrl = `${hubBaseUrl}/proxy/stream/${edge.device_id}/${target}`;
+        const streamUrl = getStreamUrl(edge, target);
         const ts = state.snapshotTimestamps[fKey] || (state.snapshotTimestamps[fKey] = Date.now());
-        const snapshotUrl = `${hubBaseUrl}/proxy/snapshot/${edge.device_id}/${target}${ts ? `?t=${ts}` : ''}`;
+        const snapshotUrl = getSnapshotUrl(edge, target, ts);
         const currentSrc = isLive ? streamUrl : snapshotUrl;
         const frameAge = formatFrameAge(ts);
         const isFull = state.fullscreenSensorKey === `${edge.device_id}:${sensor.id}`;

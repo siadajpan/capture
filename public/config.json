@@ -1,12 +1,18 @@
 {
+  "fleet_nodes": [
+    { "id": "edge-pi-zero-01", "name": "Pi Zero #2", "url": "https://fleet.capture.me.uk" },
+    { "id": "edge-pi-zero-03", "name": "Pi Zero #1", "url": "https://fleet1.capture.me.uk" },
+    { "id": "edge-pi-zero-02", "name": "Pi Zero #3", "url": "https://fleet3.capture.me.uk" }
+  ],
   "default_hub_url": "https://fleet.capture.me.uk",
   "fallback_urls": [
     "https://fleet.capture.me.uk",
-    "https://promises-processor-anyway-dishes.trycloudflare.com",
+    "https://fleet1.capture.me.uk",
+    "https://fleet3.capture.me.uk",
     "http://127.0.0.1:8000",
     "http://localhost:8000"
   ],
   "production_direct_pi_url": "https://fleet.capture.me.uk",
   "device_poll_interval_ms": 1800,
-  "app_version": "1.5.0"
+  "app_version": "1.6.0"
 }
