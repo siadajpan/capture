@@ -2260,6 +2260,21 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 </div>
               </div>
 
+              <div class="fleet-hotspot-control">
+                <div class="hotspot-status-label">
+                  <span>📡 Wi-Fi Hotspot:</span>
+                  <span class="hotspot-badge ${edge.hotspot_enabled !== false ? 'active' : 'disabled'}">
+                    ${edge.hotspot_enabled !== false ? 'Broadcasting (AP Active)' : 'Disabled (Battery Saver)'}
+                  </span>
+                </div>
+                <button 
+                  class="btn-hotspot-toggle ${edge.hotspot_enabled !== false ? 'btn-hotspot-off' : 'btn-hotspot-on'}" 
+                  onclick="window.toggleEdgeHotspot('${edge.device_id}', ${edge.hotspot_enabled === false})"
+                  title="${edge.hotspot_enabled !== false ? 'Turn off hotspot to save battery' : 'Turn on hotspot'}">
+                  ${edge.hotspot_enabled !== false ? '⚡ Turn OFF (Save Battery)' : '📡 Turn ON Hotspot'}
+                </button>
+              </div>
+
               <div class="fleet-card-actions">
                 ${isOnline ? `
                   <button class="btn-action-view" onclick="window.focusDeviceFeed('${edge.device_id}')">
@@ -2310,6 +2325,31 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           await pollData();
         } catch (err) {
           alert('Failed to remove edge: ' + err);
+        }
+      };
+
+      window.toggleEdgeHotspot = async function(deviceId, targetState) {
+        try {
+          const btn = event?.currentTarget;
+          if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Updating...';
+          }
+          const res = await fetch(`${hubBaseUrl}/api/edges/${deviceId}/hotspot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: targetState })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          const edge = state.edges.find(e => e.device_id === deviceId);
+          if (edge) {
+            edge.hotspot_enabled = data.hotspot_enabled !== false;
+          }
+          renderFleetCards();
+        } catch (err) {
+          alert('Failed to update hotspot for ' + deviceId + ': ' + err.message);
+          renderFleetCards();
         }
       };
 

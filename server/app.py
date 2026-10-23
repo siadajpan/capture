@@ -301,6 +301,32 @@ async def remove_edge(device_id: str):
     raise HTTPException(status_code=404, detail="Edge not found")
 
 
+@app.post("/api/edges/{device_id}/hotspot")
+async def toggle_device_hotspot(device_id: str, req: Optional[dict] = None):
+    edge = known_edges.get(device_id)
+    enabled = True
+    if req and "enabled" in req:
+        enabled = bool(req["enabled"])
+    
+    if edge:
+        host = edge.get("host")
+        port = edge.get("port", 5001)
+        url = f"http://{host}:{port}/api/hotspot"
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=4.0)) as session:
+                async with session.post(url, json={"enabled": enabled}) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        edge["hotspot_enabled"] = data.get("hotspot_enabled", enabled)
+                        save_registry()
+                        return data
+        except Exception as e:
+            logger.warning(f"Could not reach {device_id} for hotspot toggle: {e}")
+        edge["hotspot_enabled"] = enabled
+        save_registry()
+    return {"status": "ok", "hotspot_enabled": enabled}
+
+
 @app.post("/api/display/toggle")
 async def toggle_display(req: Optional[dict] = None):
     global display_enabled

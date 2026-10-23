@@ -1487,6 +1487,52 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             if content_length > 0:
                 self.rfile.read(content_length)
             self._send_json({"display_enabled": True})
+        elif path == "/api/hotspot":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                payload = json.loads(body.decode('utf-8'))
+            except Exception:
+                payload = {}
+            enabled = payload.get("enabled", True)
+            res = self.daemon_ref.set_hotspot_state(enabled)
+            self._send_json(res)
+        elif path.startswith("/api/edges/") and path.endswith("/hotspot"):
+            parts = [p for p in path.split("/") if p]
+            target_dev = parts[2] if len(parts) >= 4 else None
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                payload = json.loads(body.decode('utf-8'))
+            except Exception:
+                payload = {}
+            enabled = payload.get("enabled", True)
+
+            my_id = self.daemon_ref.config.get("device_id")
+            if target_dev == my_id or target_dev == "edge-pi-zero-01" or not target_dev:
+                res = self.daemon_ref.set_hotspot_state(enabled)
+                self._send_json(res)
+            else:
+                peer_ip = self.daemon_ref.peer_ips.get(target_dev)
+                if not peer_ip:
+                    fallback_map = {"edge-pi-zero-02": "192.168.4.39", "edge-pi-zero-03": "192.168.4.30"}
+                    peer_ip = fallback_map.get(target_dev)
+
+                if peer_ip:
+                    try:
+                        req = urllib.request.Request(
+                            f"http://{peer_ip}:5001/api/hotspot",
+                            data=body,
+                            headers={"Content-Type": "application/json"},
+                            method="POST"
+                        )
+                        with urllib.request.urlopen(req, timeout=5) as r:
+                            self._send_json(json.loads(r.read().decode()))
+                            return
+                    except Exception as e:
+                        self._send_json({"status": "error", "message": f"Peer error: {e}"}, status_code=502)
+                        return
+                self._send_json({"status": "error", "message": f"Device {target_dev} not currently reachable"}, status_code=404)
         elif path == "/api/exec":
             content_length = int(self.headers.get('Content-Length', 0))
             cmd = ""
@@ -1507,6 +1553,52 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "No cmd specified"}, status_code=400)
         else:
             self.send_error(404, "Not Found")
+
+    def get_hotspot_status(self):
+        try:
+            p = subprocess.run(["pgrep", "-x", "hostapd"], stdout=subprocess.PIPE, text=True)
+            return bool(p.stdout.strip())
+        except Exception:
+            return True
+
+    def set_hotspot_state(self, enabled: bool):
+        action = "start" if enabled else "stop"
+        try:
+            if os.path.exists("/home/pi/toggle_fleet_hotspot.sh"):
+                subprocess.run(["sudo", "/home/pi/toggle_fleet_hotspot.sh", action], check=False)
+            elif enabled:
+                subprocess.run(["sudo", "systemctl", "start", "hostapd"], check=False)
+            else:
+                subprocess.run(["sudo", "pkill", "-9", "hostapd"], check=False)
+                subprocess.run(["sudo", "pkill", "-9", "dnsmasq"], check=False)
+
+            # If UZ801 dongle is present, also update modem WiFi
+            wifi_stat = "1" if enabled else "0"
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        "http://192.168.100.1/ajax",
+                        data=b'{"funcNo":1000,"username":"admin","password":"admin"}',
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    ),
+                    timeout=2
+                )
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        "http://192.168.100.1/ajax",
+                        data=json.dumps({"funcNo": 1007, "wifi_status": wifi_stat}).encode(),
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    ),
+                    timeout=3
+                )
+            except Exception:
+                pass
+        except Exception as ex:
+            logger.warning(f"Error setting hotspot state: {ex}")
+
+        return {"status": "ok", "hotspot_enabled": self.get_hotspot_status()}
 
     def _proxy_peer_request(self, rel_path, dev_id):
         peer_ip = self.daemon_ref.peer_ips.get(dev_id)
@@ -1588,6 +1680,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             "link_status": "gateway",
             "last_seen": time.time(),
             "network": self.daemon_ref.get_network_info(),
+            "hotspot_enabled": self.daemon_ref.get_hotspot_status(),
             "sensors": sensor_info,
             "modalities": list(set(s.modality for s in self.daemon_ref.sensors)),
             "collection": self.daemon_ref.collector.get_status()
