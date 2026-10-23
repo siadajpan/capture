@@ -2313,6 +2313,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }
 
         el.fleetCardsContainer.innerHTML = state.edges.map(edge => {
+          const hotspotSSID = edge.hotspot_ssid || (
+            edge.device_id === 'edge-pi-zero-01' ? 'CaptureFleet2' :
+            edge.device_id === 'edge-pi-zero-03' ? 'CaptureFleet1' :
+            edge.device_id === 'edge-pi-zero-02' ? 'CaptureFleet3' :
+            'CaptureFleet'
+          );
           const isOnline = Boolean(edge.online);
           const net = edge.network || {};
           let netLabel = edge.host ? `${edge.host}:${edge.port}` : 'Default';
@@ -2387,14 +2393,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 <div class="hotspot-status-label">
                   <span>📡 Wi-Fi Hotspot:</span>
                   <span class="hotspot-badge ${edge.hotspot_enabled !== false ? 'active' : 'disabled'}">
-                    ${edge.hotspot_enabled !== false ? 'Broadcasting (AP Active)' : 'Disabled (Battery Saver)'}
+                    ${edge.hotspot_enabled !== false ? `🟢 ${hotspotSSID} (Active)` : `⚪ ${hotspotSSID} (Disabled)`}
                   </span>
                 </div>
                 <button 
                   class="btn-hotspot-toggle ${edge.hotspot_enabled !== false ? 'btn-hotspot-off' : 'btn-hotspot-on'}" 
                   onclick="window.toggleEdgeHotspot('${edge.device_id}', ${edge.hotspot_enabled === false})"
-                  title="${edge.hotspot_enabled !== false ? 'Turn off hotspot to save battery' : 'Turn on hotspot'}">
-                  ${edge.hotspot_enabled !== false ? '⚡ Turn OFF (Save Battery)' : '📡 Turn ON Hotspot'}
+                  title="${edge.hotspot_enabled !== false ? `Turn off ${hotspotSSID} to save battery` : `Turn on ${hotspotSSID}`}">
+                  ${edge.hotspot_enabled !== false ? `⚡ Turn OFF ${hotspotSSID}` : `📡 Turn ON ${hotspotSSID}`}
                 </button>
               </div>
 
