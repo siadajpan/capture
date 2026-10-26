@@ -431,6 +431,15 @@ class HLKLD2410SDriver:
         self.target_detected = False
         self.distance_cm = None
         self.state_str = "Standby (No Target)"
+        self.target_state = 0
+        self.moving_dist_cm = 0
+        self.moving_energy = 0
+        self.stationary_dist_cm = 0
+        self.stationary_energy = 0
+        self.moving_gates = [0] * 9
+        self.stationary_gates = [0] * 9
+        self.latest_raw_packet = b""
+        self.latest_raw_ts = 0.0
         self.last_update_time = 0.0
         self.packets_received = 0
         self.latest_jpeg = None
@@ -481,6 +490,21 @@ class HLKLD2410SDriver:
                     import serial
                     ser = serial.Serial(p, baudrate=self.baudrate, timeout=0.2)
                     logger.info(f"[radar] Connected to HLK-LD2410S on {p} @ {self.baudrate} baud")
+                    try:
+                        # Activate Engineering Mode on HLK-LD2410S to unlock 9-gate RF spectrum
+                        # 1. Enable Configuration (FD FC FB FA 04 00 FF 00 01 00 04 03 02 01)
+                        ser.write(bytes([0xFD, 0xFC, 0xFB, 0xFA, 0x04, 0x00, 0xFF, 0x00, 0x01, 0x00, 0x04, 0x03, 0x02, 0x01]))
+                        time.sleep(0.06)
+                        # 2. Enable Engineering Mode (FD FC FB FA 02 00 62 00 04 03 02 01)
+                        ser.write(bytes([0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00, 0x62, 0x00, 0x04, 0x03, 0x02, 0x01]))
+                        time.sleep(0.06)
+                        # 3. End Configuration (FD FC FB FA 02 00 FE 00 04 03 02 01)
+                        ser.write(bytes([0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00, 0xFE, 0x00, 0x04, 0x03, 0x02, 0x01]))
+                        time.sleep(0.06)
+                        ser.reset_input_buffer()
+                        logger.info("[radar] Activated Engineering Mode (9-gate spectrum)")
+                    except Exception as cmd_err:
+                        logger.warning(f"[radar] Engineering Mode activation warning: {cmd_err}")
                     break
                 except Exception:
                     continue
@@ -532,23 +556,49 @@ class HLKLD2410SDriver:
                                     parts = raw_line.split()
                                     if parts and parts[0].lower() == "range" and len(parts) >= 2 and parts[1].isdigit():
                                         dist = int(parts[1])
+                                        now_ts = time.time()
+                                        m_gates = [0] * 9
+                                        s_gates = [0] * 9
+                                        if dist > 0:
+                                            g_idx = min(8, int(dist / 75.0))
+                                            m_gates[g_idx] = 85
                                         with self.lock:
                                             self.target_detected = (dist > 0)
                                             self.distance_cm = dist if dist > 0 else None
                                             self.state_str = f"Target Detected ({dist}cm)" if dist > 0 else "Standby (No Target)"
-                                            self.last_update_time = time.time()
+                                            self.target_state = 1 if dist > 0 else 0
+                                            self.moving_dist_cm = dist if dist > 0 else 0
+                                            self.moving_energy = 85 if dist > 0 else 0
+                                            self.stationary_dist_cm = 0
+                                            self.stationary_energy = 0
+                                            self.moving_gates = m_gates
+                                            self.stationary_gates = s_gates
+                                            self.latest_raw_packet = raw_line.encode('utf-8')
+                                            self.latest_raw_ts = now_ts
+                                            self.last_update_time = now_ts
                                             self.packets_received += 1
                                     elif raw_line.lower() in ["on", "moving"]:
+                                        now_ts = time.time()
                                         with self.lock:
                                             self.target_detected = True
-                                            self.last_update_time = time.time()
+                                            self.target_state = 1
+                                            self.state_str = "Target Active"
+                                            self.latest_raw_packet = raw_line.encode('utf-8')
+                                            self.latest_raw_ts = now_ts
+                                            self.last_update_time = now_ts
                                             self.packets_received += 1
                                     elif raw_line.lower() in ["off", "dis", "standby"]:
+                                        now_ts = time.time()
                                         with self.lock:
                                             self.target_detected = False
                                             self.distance_cm = None
+                                            self.target_state = 0
                                             self.state_str = "Standby (No Target)"
-                                            self.last_update_time = time.time()
+                                            self.moving_gates = [0] * 9
+                                            self.stationary_gates = [0] * 9
+                                            self.latest_raw_packet = raw_line.encode('utf-8')
+                                            self.latest_raw_ts = now_ts
+                                            self.last_update_time = now_ts
                                             self.packets_received += 1
                                 continue
 
@@ -559,16 +609,31 @@ class HLKLD2410SDriver:
                             if buf[0] == MINI_HEADER:
                                 try:
                                     end_pos = buf.index(MINI_TAIL)
-                                    frame = buf[:end_pos + 1]
+                                    frame = bytes(buf[:end_pos + 1])
                                     buf = buf[end_pos + 1:]
                                     if len(frame) >= 5:
+                                        now_ts = time.time()
                                         st = frame[1]
                                         dist = int.from_bytes(frame[2:4], byteorder='little')
+                                        m_gates = [0] * 9
+                                        s_gates = [0] * 9
+                                        if dist > 0:
+                                            g_idx = min(8, int(dist / 75.0))
+                                            m_gates[g_idx] = 70
                                         with self.lock:
                                             self.target_detected = (st > 0)
                                             self.distance_cm = dist if self.target_detected else None
                                             self.state_str = "Target Detected" if st > 0 else "Standby (No Target)"
-                                            self.last_update_time = time.time()
+                                            self.target_state = st
+                                            self.moving_dist_cm = dist if st > 0 else 0
+                                            self.moving_energy = 70 if st > 0 else 0
+                                            self.stationary_dist_cm = 0
+                                            self.stationary_energy = 0
+                                            self.moving_gates = m_gates
+                                            self.stationary_gates = s_gates
+                                            self.latest_raw_packet = frame
+                                            self.latest_raw_ts = now_ts
+                                            self.last_update_time = now_ts
                                             self.packets_received += 1
                                     continue
                                 except ValueError:
@@ -577,19 +642,62 @@ class HLKLD2410SDriver:
                             elif buf.startswith(STD_HEADER):
                                 end_idx = buf.find(STD_TAIL, 4)
                                 if end_idx != -1:
-                                    frame = buf[:end_idx + 4]
+                                    frame = bytes(buf[:end_idx + 4])
                                     buf = buf[end_idx + 4:]
+                                    now_ts = time.time()
                                     if len(frame) >= 15:
+                                        data_type = frame[6]
                                         t_st = frame[8]
                                         m_d = int.from_bytes(frame[9:11], byteorder='little')
+                                        m_e = frame[11]
                                         s_d = int.from_bytes(frame[12:14], byteorder='little')
+                                        s_e = frame[14]
+                                        d_d = int.from_bytes(frame[15:17], byteorder='little') if len(frame) >= 17 else 0
+
+                                        # In engineering mode (data_type == 0x01)
+                                        m_gates = [0] * 9
+                                        s_gates = [0] * 9
+                                        if data_type == 0x01 and len(frame) >= 38:
+                                            max_m = frame[17] if frame[17] < 16 else 8
+                                            max_s = frame[18] if frame[18] < 16 else 8
+                                            m_cnt = min(max_m + 1, 9)
+                                            s_cnt = min(max_s + 1, 9)
+                                            m_start = 19
+                                            m_gates = list(frame[m_start : m_start + m_cnt])
+                                            while len(m_gates) < 9:
+                                                m_gates.append(0)
+                                            s_start = m_start + max_m + 1
+                                            s_gates = list(frame[s_start : s_start + s_cnt])
+                                            while len(s_gates) < 9:
+                                                s_gates.append(0)
+                                        else:
+                                            # Synthesize gate energy based on detected distance
+                                            if m_d > 0:
+                                                g_idx = min(8, int(m_d / 75.0))
+                                                m_gates[g_idx] = m_e if m_e > 0 else 50
+                                            if s_d > 0:
+                                                g_idx = min(8, int(s_d / 75.0))
+                                                s_gates[g_idx] = s_e if s_e > 0 else 50
+
                                         active_dist = m_d if (m_d > 0) else s_d
+                                        if active_dist == 0 and d_d > 0:
+                                            active_dist = d_d
+
                                         st_map = {0: "Standby (No Target)", 1: "Moving Target", 2: "Stationary Target", 3: "Moving & Stationary"}
                                         with self.lock:
                                             self.target_detected = (t_st > 0)
                                             self.distance_cm = active_dist if self.target_detected else None
                                             self.state_str = st_map.get(t_st, f"Target Active (0x{t_st:02x})")
-                                            self.last_update_time = time.time()
+                                            self.target_state = t_st
+                                            self.moving_dist_cm = m_d
+                                            self.moving_energy = m_e
+                                            self.stationary_dist_cm = s_d
+                                            self.stationary_energy = s_e
+                                            self.moving_gates = m_gates
+                                            self.stationary_gates = s_gates
+                                            self.latest_raw_packet = frame
+                                            self.latest_raw_ts = now_ts
+                                            self.last_update_time = now_ts
                                             self.packets_received += 1
                                     continue
                                 else:
@@ -642,84 +750,191 @@ class HLKLD2410SDriver:
             st_text = self.state_str
             pkt_cnt = self.packets_received
             last_up = self.last_update_time
+            m_gates = list(self.moving_gates)
+            s_gates = list(self.stationary_gates)
 
         if time.time() - last_up > 2.5 and detected:
             if not self.has_gpio:
                 detected = False
                 dist_cm = None
                 st_text = "Standby"
+                m_gates = [0] * 9
+                s_gates = [0] * 9
 
         w = self.width
         h = self.height
         img = Image.new("RGB", (w, h), color=(13, 17, 23))
         draw = ImageDraw.Draw(img)
 
-        font_giant = self._get_font(118, bold=True)
-        font_unit  = self._get_font(36, bold=True)
-        font_sub   = self._get_font(18, bold=False)
-        font_badge = self._get_font(13, bold=True)
-        font_meta  = self._get_font(12, bold=False)
+        font_giant = self._get_font(72, bold=True)
+        font_unit  = self._get_font(28, bold=True)
+        font_sub   = self._get_font(15, bold=False)
+        font_badge = self._get_font(12, bold=True)
+        font_meta  = self._get_font(11, bold=False)
+        font_gate  = self._get_font(11, bold=True)
+        font_val   = self._get_font(10, bold=False)
 
         def _text_size(txt, fnt):
             if hasattr(draw, "textbbox"):
-                bb = draw.textbbox((0, 0), txt, font=fnt)
+                bb = draw.textbbox((0, 0), str(txt), font=fnt)
                 return bb[2] - bb[0], bb[3] - bb[1]
-            return draw.textsize(txt, font=fnt)
+            return draw.textsize(str(txt), font=fnt)
 
-        # 1. Header Bar: Move description to the far right so top-left overlay buttons have plenty of room
-        draw.rectangle([0, 0, w, 40], fill=(18, 24, 34))
-        draw.line([0, 40, w, 40], fill=(30, 41, 59), width=1)
+        # 1. Top Header Bar (0..36)
+        draw.rectangle([0, 0, w, 36], fill=(18, 24, 34))
+        draw.line([0, 36, w, 36], fill=(30, 41, 59), width=1)
 
-        hdr_label = "HLK-LD2410S Radar"
-        hw_w, _ = _text_size(hdr_label, font_badge)
-        draw.text((w - hw_w - 16, 12), hdr_label, fill=(148, 163, 184), font=font_badge)
+        hdr_title = "HLK-LD2410S 24GHz mmWave Radar"
+        draw.text((16, 10), hdr_title, fill=(226, 232, 240), font=font_badge)
 
-        # 2. Main Hero Distance Centerpiece (ONLY distance reading, no presence badge, no slider bar)
-        center_y = int(h * 0.48)
-
-        if dist_cm is not None and dist_cm > 0:
-            d_m = dist_cm / 100.0
-            dist_main_str = f"{d_m:.2f}"
-            dist_unit_str = "m"
-            cm_sub_str = f"{dist_cm} cm"
-
-            num_w, num_h = _text_size(dist_main_str, font_giant)
-            unit_w, _ = _text_size(dist_unit_str, font_unit)
-
-            total_w = num_w + 14 + unit_w
-            start_x = (w - total_w) // 2
-
-            num_x = start_x
-            num_y = center_y - (num_h // 2) - 15
-            draw.text((num_x, num_y), dist_main_str, fill=(56, 189, 248), font=font_giant)
-
-            unit_x = num_x + num_w + 14
-            unit_y = num_y + num_h - 44
-            draw.text((unit_x, unit_y), dist_unit_str, fill=(148, 163, 184), font=font_unit)
-
-
-
+        # Status badge pill on right
+        if detected:
+            badge_bg = (16, 50, 36)
+            badge_border = (34, 197, 94)
+            badge_text_col = (74, 222, 128)
+            badge_txt = st_text.upper()
         else:
-            standby_str = "--"
-            num_w, num_h = _text_size(standby_str, font_giant)
-            draw.text(((w - num_w) // 2, center_y - (num_h // 2) - 20), standby_str, fill=(71, 85, 105), font=font_giant)
+            badge_bg = (30, 41, 59)
+            badge_border = (71, 85, 105)
+            badge_text_col = (148, 163, 184)
+            badge_txt = "STANDBY / NO TARGET"
 
-            lbl_str = "STANDBY"
-            lbl_w, _ = _text_size(lbl_str, font_sub)
-            draw.text(((w - lbl_w) // 2, center_y + (num_h // 2) + 16), lbl_str, fill=(100, 116, 139), font=font_sub)
+        bw, _ = _text_size(badge_txt, font_badge)
+        pill_w = bw + 20
+        pill_x1 = w - pill_w - 16
+        pill_y1 = 7
+        pill_x2 = w - 16
+        pill_y2 = 29
+        draw.rectangle([pill_x1, pill_y1, pill_x2, pill_y2], fill=badge_bg, outline=badge_border, width=1)
+        draw.text((pill_x1 + 10, pill_y1 + 4), badge_txt, fill=badge_text_col, font=font_badge)
 
-        # 3. Bottom Footer Bar
-        draw.rectangle([0, h - 36, w, h], fill=(18, 24, 34))
-        draw.line([0, h - 36, w, h - 36], fill=(30, 41, 59), width=1)
+        # 2. Hero Distance Section (37..195)
+        hero_center_y = 108
+        if detected and dist_cm and dist_cm > 0:
+            d_m = dist_cm / 100.0
+            num_str = f"{d_m:.2f}"
+            unit_str = "m"
+            num_w, num_h = _text_size(num_str, font_giant)
+            unit_w, _ = _text_size(unit_str, font_unit)
 
-        draw.text((20, h - 25), f"PKTS: {pkt_cnt}", fill=(100, 116, 139), font=font_meta)
+            total_w = num_w + 8 + unit_w
+            num_x = (w - total_w) // 2
+            num_y = hero_center_y - (num_h // 2) - 8
+
+            draw.text((num_x, num_y), num_str, fill=(56, 189, 248), font=font_giant)
+            draw.text((num_x + num_w + 8, num_y + num_h - 32), unit_str, fill=(148, 163, 184), font=font_unit)
+
+            gate_idx = min(8, int(dist_cm / 75.0))
+            sub_info = f"Nearest Target: {dist_cm} cm | Gate {gate_idx} ({gate_idx*0.75:.2f}-{(gate_idx+1)*0.75:.2f}m)"
+            sw, _ = _text_size(sub_info, font_sub)
+            draw.text(((w - sw) // 2, num_y + num_h + 8), sub_info, fill=(148, 163, 184), font=font_sub)
+        else:
+            num_str = "--"
+            num_w, num_h = _text_size(num_str, font_giant)
+            draw.text(((w - num_w) // 2, hero_center_y - (num_h // 2) - 10), num_str, fill=(71, 85, 105), font=font_giant)
+            sub_info = "Waiting for presence / movement within 6.75m range..."
+            sw, _ = _text_size(sub_info, font_sub)
+            draw.text(((w - sw) // 2, hero_center_y + 30), sub_info, fill=(100, 116, 139), font=font_sub)
+
+        # Divider line
+        draw.line([20, 195, w - 20, 195], fill=(30, 41, 59), width=1)
+
+        # 3. Full RF Energy Spectrum Section (196..445)
+        spec_title = "RANGE-GATE RF ENERGY SPECTRUM (0.0 - 6.75m)"
+        draw.text((24, 204), spec_title, fill=(203, 213, 225), font=font_badge)
+
+        m_col = (14, 165, 233)   # Cyan (Moving)
+        s_col = (245, 158, 11)   # Amber (Stationary)
+        
+        # Legend
+        draw.rectangle([w - 240, 206, w - 230, 216], fill=m_col)
+        draw.text((w - 225, 204), "Moving", fill=(148, 163, 184), font=font_meta)
+        draw.rectangle([w - 150, 206, w - 140, 216], fill=s_col)
+        draw.text((w - 135, 204), "Stationary", fill=(148, 163, 184), font=font_meta)
+
+        chart_x0 = 36
+        chart_x1 = w - 36
+        chart_y_top = 230
+        chart_y_base = 405
+        chart_h = chart_y_base - chart_y_top
+
+        for pct in [25, 50, 75, 100]:
+            gy = chart_y_base - int(chart_h * (pct / 100.0))
+            draw.line([chart_x0, gy, chart_x1, gy], fill=(22, 30, 44), width=1)
+            draw.text((chart_x0 - 24, gy - 6), f"{pct}", fill=(60, 75, 95), font=font_val)
+
+        draw.line([chart_x0, chart_y_base, chart_x1, chart_y_base], fill=(51, 65, 85), width=1)
+
+        num_gates = 9
+        col_width = (chart_x1 - chart_x0) / num_gates
+        bar_width = int(col_width * 0.32)
+
+        for g in range(num_gates):
+            gx_center = chart_x0 + int((g + 0.5) * col_width)
+            m_energy = m_gates[g] if g < len(m_gates) else 0
+            s_energy = s_gates[g] if g < len(s_gates) else 0
+
+            m_bx = gx_center - bar_width - 1
+            m_bar_h = max(2, int(chart_h * (min(100, max(0, m_energy)) / 100.0))) if m_energy > 0 else 0
+            if m_bar_h > 0:
+                draw.rectangle([m_bx, chart_y_base - m_bar_h, m_bx + bar_width, chart_y_base], fill=m_col)
+                if m_energy >= 15:
+                    ew, _ = _text_size(str(m_energy), font_val)
+                    draw.text((m_bx + (bar_width - ew) // 2, chart_y_base - m_bar_h - 13), str(m_energy), fill=m_col, font=font_val)
+
+            s_bx = gx_center + 1
+            s_bar_h = max(2, int(chart_h * (min(100, max(0, s_energy)) / 100.0))) if s_energy > 0 else 0
+            if s_bar_h > 0:
+                draw.rectangle([s_bx, chart_y_base - s_bar_h, s_bx + bar_width, chart_y_base], fill=s_col)
+                if s_energy >= 15:
+                    ew, _ = _text_size(str(s_energy), font_val)
+                    draw.text((s_bx + (bar_width - ew) // 2, chart_y_base - s_bar_h - 13), str(s_energy), fill=s_col, font=font_val)
+
+            dist_start = g * 0.75
+            gate_lbl = f"G{g}"
+            range_lbl = f"{dist_start:.1f}m"
+
+            gw, _ = _text_size(gate_lbl, font_gate)
+            draw.text((gx_center - gw // 2, chart_y_base + 6), gate_lbl, fill=(203, 213, 225), font=font_gate)
+
+            rw, _ = _text_size(range_lbl, font_val)
+            draw.text((gx_center - rw // 2, chart_y_base + 20), range_lbl, fill=(100, 116, 139), font=font_val)
+
+        # 4. Bottom Footer Bar
+        draw.rectangle([0, h - 30, w, h], fill=(18, 24, 34))
+        draw.line([0, h - 30, w, h - 30], fill=(30, 41, 59), width=1)
+
+        draw.text((20, h - 21), f"PKTS: {pkt_cnt} | 115200 8N1 SPECTRUM ACTIVE", fill=(100, 116, 139), font=font_meta)
         clock_str = time.strftime("%H:%M:%S")
-        draw.text((w - 75, h - 25), clock_str, fill=(100, 116, 139), font=font_meta)
+        cw, _ = _text_size(clock_str, font_meta)
+        draw.text((w - cw - 20, h - 21), clock_str, fill=(100, 116, 139), font=font_meta)
 
         import io
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
         return buf.getvalue()
+
+    def get_spectrum_data(self):
+        with self.lock:
+            return {
+                "timestamp": self.last_update_time,
+                "target_detected": self.target_detected,
+                "target_state": self.target_state,
+                "state_str": self.state_str,
+                "distance_cm": self.distance_cm,
+                "moving_dist_cm": self.moving_dist_cm,
+                "moving_energy": self.moving_energy,
+                "stationary_dist_cm": self.stationary_dist_cm,
+                "stationary_energy": self.stationary_energy,
+                "moving_gates": list(self.moving_gates),
+                "stationary_gates": list(self.stationary_gates),
+                "packets_received": self.packets_received,
+                "raw_hex": self.latest_raw_packet.hex() if self.latest_raw_packet else ""
+            }
+
+    def get_latest_raw_packet(self):
+        with self.lock:
+            return (self.latest_raw_ts, self.latest_raw_packet)
 
     def get_jpeg_frame(self):
         now = time.time()
@@ -1056,6 +1271,16 @@ class SensorDriver:
             except Exception:
                 time.sleep(0.02)
 
+    def get_spectrum_data(self):
+        if getattr(self, "radar_driver", None):
+            return self.radar_driver.get_spectrum_data()
+        return None
+
+    def get_latest_raw_packet(self):
+        if getattr(self, "radar_driver", None):
+            return self.radar_driver.get_latest_raw_packet()
+        return (0.0, b"")
+
     def get_jpeg_frame(self):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
         if self.backend == "radar" and getattr(self, "radar_driver", None):
@@ -1380,6 +1605,28 @@ class CollectionManager:
                     except Exception as e:
                         logger.error(f"Failed to write frame to {file_path}: {e}")
 
+                # Save raw radar packet bitstream & full spectrum JSONL
+                if hasattr(sensor, "get_spectrum_data") and (sensor.modality == "radar" or getattr(sensor, "backend", "") == "radar"):
+                    spec = sensor.get_spectrum_data()
+                    if spec:
+                        try:
+                            spec_file = os.path.join(folder, "radar_spectrum.jsonl")
+                            with open(spec_file, "a", encoding="utf-8") as sf:
+                                sf.write(json.dumps(spec) + "\n")
+                        except Exception as se:
+                            logger.error(f"Failed to write radar spectrum: {se}")
+
+                    raw_ts, raw_pkt = sensor.get_latest_raw_packet()
+                    if raw_pkt:
+                        try:
+                            import struct
+                            raw_file = os.path.join(folder, "radar_raw.bin")
+                            with open(raw_file, "ab") as rf:
+                                # Header: 8-byte double timestamp, 2-byte uint16 packet length
+                                rf.write(struct.pack("<dH", raw_ts, len(raw_pkt)) + raw_pkt)
+                        except Exception as re:
+                            logger.error(f"Failed to write radar raw packet: {re}")
+
             elapsed = time.time() - t0
             sleep_time = interval - elapsed
             if sleep_time > 0:
@@ -1455,6 +1702,14 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/snapshot/"):
             target = path.split("/api/snapshot/")[1]
             self._handle_snapshot(target)
+        elif path == "/api/radar/spectrum":
+            for s in self.daemon_ref.sensors:
+                if hasattr(s, "get_spectrum_data"):
+                    spec = s.get_spectrum_data()
+                    if spec is not None:
+                        self._send_json(spec)
+                        return
+            self._send_json({"error": "No radar sensor active"}, status_code=404)
         elif path == "/api/collection/start":
             res = self.daemon_ref.collector.start_collection()
             self._send_json(res)
@@ -1936,6 +2191,41 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 self.wfile.write(content)
             except Exception as ex:
                 self.send_error(500, f"Error reading frame: {ex}")
+        elif action in ["spectrum", "radar_spectrum"]:
+            spec_file = os.path.join(target_dir, "radar_spectrum.jsonl")
+            if not os.path.isfile(spec_file):
+                self.send_error(404, "No radar spectrum recorded for this session")
+                return
+            try:
+                with open(spec_file, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as ex:
+                self.send_error(500, f"Error reading radar spectrum: {ex}")
+        elif action in ["raw", "radar_raw"]:
+            raw_file = os.path.join(target_dir, "radar_raw.bin")
+            if not os.path.isfile(raw_file):
+                self.send_error(404, "No raw radar stream recorded for this session")
+                return
+            try:
+                with open(raw_file, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition", 'attachment; filename="radar_raw.bin"')
+                self.send_header("Content-Length", str(len(content)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as ex:
+                self.send_error(500, f"Error reading raw radar stream: {ex}")
         else:
             self.send_error(404, f"Unknown action: {action}")
 

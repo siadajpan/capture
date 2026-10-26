@@ -297,6 +297,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             <span class="buffer-chip" id="playbackBufferBadge" title="Frames cached in browser memory on laptop for instant smooth playback">RAM: 0%</span>
             <button type="button" class="btn-secondary-action" id="btnCacheLaptop" title="Cache all frames of this session into laptop memory for smooth offline scrubbing">💾 Cache to Laptop</button>
             <button type="button" class="btn-secondary-action" id="btnExportSession" title="Export session metadata and download JSON to laptop">📥 Export Manifest</button>
+            <button type="button" class="btn-secondary-action" id="btnDownloadRadarRaw" title="Download raw radar binary bitstream (radar_raw.bin)" style="display:none;">📡 Raw Radar (.bin)</button>
+            <button type="button" class="btn-secondary-action" id="btnDownloadRadarSpectrum" title="Download full radar spectrum data (radar_spectrum.jsonl)" style="display:none;">📊 Spectrum (.jsonl)</button>
             <button type="button" class="btn-secondary-action" id="btnSyncHub" title="Optional: send recorded session to Central Server">☁️ Backup to Server</button>
 
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:4px;">Speed:</span>
@@ -1030,6 +1032,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         btnSyncHub: document.getElementById('btnSyncHub'),
         btnCacheLaptop: document.getElementById('btnCacheLaptop'),
         btnExportSession: document.getElementById('btnExportSession'),
+        btnDownloadRadarRaw: document.getElementById('btnDownloadRadarRaw'),
+        btnDownloadRadarSpectrum: document.getElementById('btnDownloadRadarSpectrum'),
 
         btnSyncMode: document.getElementById('btnSyncMode'),
 
@@ -1627,6 +1631,12 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         }
         if (el.btnExportSession) {
           el.btnExportSession.addEventListener('click', exportSessionManifest);
+        }
+        if (el.btnDownloadRadarRaw) {
+          el.btnDownloadRadarRaw.addEventListener('click', downloadRadarRaw);
+        }
+        if (el.btnDownloadRadarSpectrum) {
+          el.btnDownloadRadarSpectrum.addEventListener('click', downloadRadarSpectrum);
         }
 
 
@@ -3044,6 +3054,29 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         updateBufferStats();
       }
 
+      function getActiveRadarUrl() {
+        if (!state.currentSession) return '';
+        const session = state.currentSession;
+        for (const [devId, devInfo] of Object.entries(session.devices || {})) {
+          if (devInfo.modalities && devInfo.modalities.includes('radar')) {
+            const edge = state.edges.find(e => e.device_id === devId);
+            const edgeBase = edge && edge.url ? edge.url : '';
+            return `${edgeBase}/api/session/${session.date}/${session.time}/radar`;
+          }
+        }
+        return `/api/session/${session.date}/${session.time}/radar`;
+      }
+
+      function downloadRadarRaw() {
+        const url = getActiveRadarUrl();
+        if (url) window.open(`${url}/raw`, '_blank');
+      }
+
+      function downloadRadarSpectrum() {
+        const url = getActiveRadarUrl();
+        if (url) window.open(`${url}/spectrum`, '_blank');
+      }
+
       function exportSessionManifest() {
         if (!state.currentSession) return;
         const session = state.currentSession;
@@ -3604,7 +3637,23 @@ async function startPrebuffering() {
 
 
 
+      function updateRadarButtonsVisibility() {
+        const session = state.currentSession;
+        let hasRadar = false;
+        if (session && session.devices) {
+          for (const dev of Object.values(session.devices)) {
+            if (dev.modalities && dev.modalities.includes('radar')) {
+              hasRadar = true;
+              break;
+            }
+          }
+        }
+        if (el.btnDownloadRadarRaw) el.btnDownloadRadarRaw.style.display = hasRadar ? 'inline-flex' : 'none';
+        if (el.btnDownloadRadarSpectrum) el.btnDownloadRadarSpectrum.style.display = hasRadar ? 'inline-flex' : 'none';
+      }
+
       function renderPlaybackGrid() {
+        updateRadarButtonsVisibility();
 
         if (!el.playbackGrid || !state.currentSession) return;
 
