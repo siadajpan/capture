@@ -415,6 +415,18 @@ body {
   animation: recBlink 1s infinite;
 }
 
+.record-pill.pending {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.5);
+  color: var(--accent-amber);
+  cursor: wait;
+}
+
+.record-pill.pending .record-dot {
+  background: var(--accent-amber);
+  animation: recBlink 0.4s infinite;
+}
+
 @keyframes recBlink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }

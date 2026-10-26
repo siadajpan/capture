@@ -1229,58 +1229,82 @@ class CollectionManager:
                     "session_dir": self.session_dir
                 }
 
-            now = datetime.now()
-            date_folder = now.strftime("%Y-%m-%d")
-            time_folder = now.strftime("%H-%M-%S")
-            self.session_id = f"{date_folder}_{time_folder}"
-            self.session_start_time = time.time()
-            self.session_dir = os.path.join(self.storage_root, date_folder, time_folder)
+            try:
+                # Ensure storage directory exists and test writeability
+                os.makedirs(self.storage_root, exist_ok=True)
+                test_file = os.path.join(self.storage_root, ".write_test")
+                try:
+                    with open(test_file, "w") as tf:
+                        tf.write("ok")
+                    os.remove(test_file)
+                except Exception as we:
+                    logger.warning(f"Storage root {self.storage_root} not writable ({we}); using /tmp/edge_data fallback")
+                    fallback_dir = "/tmp/edge_data"
+                    os.makedirs(fallback_dir, exist_ok=True)
+                    self.storage_root = fallback_dir
 
-            # Create modality folders for each sensor
-            self.modality_paths = {}
-            self.frame_counts = {}
-            for sensor in self.sensors:
-                modality = sensor.modality
-                mod_path = os.path.join(self.session_dir, modality)
-                os.makedirs(mod_path, exist_ok=True)
-                self.modality_paths[sensor.sensor_id] = mod_path
-                self.frame_counts[sensor.sensor_id] = 0
-            self.frame_timestamps = {sensor.sensor_id: [] for sensor in self.sensors}
+                now = datetime.now()
+                date_folder = now.strftime("%Y-%m-%d")
+                time_folder = now.strftime("%H-%M-%S")
+                self.session_id = f"{date_folder}_{time_folder}"
+                self.session_start_time = time.time()
+                self.session_dir = os.path.join(self.storage_root, date_folder, time_folder)
 
-            # Write session metadata
-            metadata = {
-                "session_id": self.session_id,
-                "start_time_iso": now.isoformat(),
-                "date_folder": date_folder,
-                "time_folder": time_folder,
-                "storage_path": self.session_dir,
-                "label": session_label or "Collection Session",
-                "sensors": [
-                    {
-                        "id": s.sensor_id,
-                        "modality": s.modality,
-                        "name": s.name,
-                        "resolution": f"{s.width}x{s.height}",
-                        "fps": s.fps
-                    }
-                    for s in self.sensors
-                ]
-            }
-            with open(os.path.join(self.session_dir, "session_manifest.json"), "w") as f:
-                json.dump(metadata, f, indent=2)
+                # Create modality folders for each sensor
+                self.modality_paths = {}
+                self.frame_counts = {}
+                for sensor in self.sensors:
+                    modality = sensor.modality
+                    mod_path = os.path.join(self.session_dir, modality)
+                    os.makedirs(mod_path, exist_ok=True)
+                    self.modality_paths[sensor.sensor_id] = mod_path
+                    self.frame_counts[sensor.sensor_id] = 0
+                self.frame_timestamps = {sensor.sensor_id: [] for sensor in self.sensors}
 
-            self.stop_event.clear()
-            self.is_recording = True
-            self.thread = threading.Thread(target=self._record_worker, daemon=True)
-            self.thread.start()
+                # Write session metadata
+                metadata = {
+                    "session_id": self.session_id,
+                    "start_time_iso": now.isoformat(),
+                    "date_folder": date_folder,
+                    "time_folder": time_folder,
+                    "storage_path": self.session_dir,
+                    "label": session_label or "Collection Session",
+                    "sensors": [
+                        {
+                            "id": s.sensor_id,
+                            "modality": s.modality,
+                            "name": s.name,
+                            "resolution": f"{s.width}x{s.height}",
+                            "fps": s.fps
+                        }
+                        for s in self.sensors
+                    ]
+                }
+                try:
+                    with open(os.path.join(self.session_dir, "session_manifest.json"), "w") as f:
+                        json.dump(metadata, f, indent=2)
+                except Exception as me:
+                    logger.warning(f"Could not write session_manifest.json: {me}")
 
-            logger.info(f"Started collection session: {self.session_dir}")
-            return {
-                "status": "recording_started",
-                "session_id": self.session_id,
-                "session_dir": self.session_dir,
-                "modalities": list(set(s.modality for s in self.sensors))
-            }
+                self.stop_event.clear()
+                self.is_recording = True
+                self.thread = threading.Thread(target=self._record_worker, daemon=True)
+                self.thread.start()
+
+                logger.info(f"Started collection session: {self.session_dir}")
+                return {
+                    "status": "recording_started",
+                    "session_id": self.session_id,
+                    "session_dir": self.session_dir,
+                    "modalities": list(set(s.modality for s in self.sensors))
+                }
+            except Exception as e:
+                logger.error(f"Failed to start collection: {e}")
+                self.is_recording = False
+                return {
+                    "status": "error",
+                    "message": str(e)
+                }
 
     def stop_collection(self):
         with self.lock:
@@ -1364,7 +1388,8 @@ class CollectionManager:
     def get_status(self):
         # Calculate disk storage stats
         try:
-            stat = os.statvfs(self.storage_root)
+            target = self.storage_root if os.path.exists(self.storage_root) else "/"
+            stat = os.statvfs(target)
             free_bytes = stat.f_bavail * stat.f_frsize
             total_bytes = stat.f_blocks * stat.f_frsize
             free_gb = round(free_bytes / (1024 ** 3), 2)
@@ -1377,7 +1402,7 @@ class CollectionManager:
             "is_recording": self.is_recording,
             "session_id": self.session_id,
             "session_dir": self.session_dir,
-            "duration_seconds": round(time.time() - self.session_start_time, 1) if self.is_recording else 0,
+            "duration_seconds": round(time.time() - self.session_start_time, 1) if (self.is_recording and self.session_start_time) else 0,
             "frame_counts": self.frame_counts,
             "storage_root": self.storage_root,
             "disk_free_gb": free_gb,
@@ -1432,14 +1457,24 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self._handle_snapshot(target)
         elif path == "/api/collection/start":
             res = self.daemon_ref.collector.start_collection()
-            if "peer=1" not in parsed.query:
-                self.daemon_ref.broadcast_to_peers("/api/collection/start?peer=1", b"{}", is_recording_state=True)
             self._send_json(res)
+            if "peer=1" not in parsed.query:
+                threading.Thread(
+                    target=self.daemon_ref.broadcast_to_peers,
+                    args=("/api/collection/start?peer=1", b"{}"),
+                    kwargs={"is_recording_state": True},
+                    daemon=True
+                ).start()
         elif path == "/api/collection/stop":
             res = self.daemon_ref.collector.stop_collection()
-            if "peer=1" not in parsed.query:
-                self.daemon_ref.broadcast_to_peers("/api/collection/stop?peer=1", b"{}", is_recording_state=False)
             self._send_json(res)
+            if "peer=1" not in parsed.query:
+                threading.Thread(
+                    target=self.daemon_ref.broadcast_to_peers,
+                    args=("/api/collection/stop?peer=1", b"{}"),
+                    kwargs={"is_recording_state": False},
+                    daemon=True
+                ).start()
         elif path == "/api/sessions" or path == "/api/recordings/sessions":
             self._handle_list_sessions()
         elif path.startswith("/api/session/"):
@@ -1471,17 +1506,27 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             res = self.daemon_ref.collector.start_collection(session_label=label)
-            if "peer=1" not in parsed.query:
-                self.daemon_ref.broadcast_to_peers("/api/collection/start?peer=1", body or b"{}", is_recording_state=True)
             self._send_json(res)
+            if "peer=1" not in parsed.query:
+                threading.Thread(
+                    target=self.daemon_ref.broadcast_to_peers,
+                    args=("/api/collection/start?peer=1", body or b"{}"),
+                    kwargs={"is_recording_state": True},
+                    daemon=True
+                ).start()
         elif path == "/api/collection/stop":
             content_length = int(self.headers.get('Content-Length', 0))
             if content_length > 0:
                 self.rfile.read(content_length)
             res = self.daemon_ref.collector.stop_collection()
-            if "peer=1" not in parsed.query:
-                self.daemon_ref.broadcast_to_peers("/api/collection/stop?peer=1", b"{}", is_recording_state=False)
             self._send_json(res)
+            if "peer=1" not in parsed.query:
+                threading.Thread(
+                    target=self.daemon_ref.broadcast_to_peers,
+                    args=("/api/collection/stop?peer=1", b"{}"),
+                    kwargs={"is_recording_state": False},
+                    daemon=True
+                ).start()
         elif path == "/api/display/toggle":
             content_length = int(self.headers.get('Content-Length', 0))
             if content_length > 0:
