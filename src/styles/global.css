@@ -1956,6 +1956,36 @@ body {
   color: var(--text-muted);
 }
 
+.card-timestamp-overlay {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: rgba(10, 14, 23, 0.88);
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  pointer-events: none;
+  z-index: 2;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  letter-spacing: 0.02em;
+}
+
+.sensor-frames-total {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  white-space: nowrap;
+}
+
 /* Master Scrubber Controller Dock */
 .playback-scrubber-dock {
   position: sticky;

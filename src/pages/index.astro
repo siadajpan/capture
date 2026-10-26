@@ -294,9 +294,10 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
             <button type="button" class="btn-secondary-action active" id="btnSyncMode" title="Toggle between physical hardware timestamp synchronization and naive frame index">⏱️ Time Synced</button>
 
-            <span class="buffer-chip" id="playbackBufferBadge" title="Frames cached in browser memory for instant smooth playback">RAM: 0%</span>
-
-            <button type="button" class="btn-secondary-action" id="btnSyncHub" title="Download all session frames to PC Hub disk for offline access">💾 Cache to PC</button>
+            <span class="buffer-chip" id="playbackBufferBadge" title="Frames cached in browser memory on laptop for instant smooth playback">RAM: 0%</span>
+            <button type="button" class="btn-secondary-action" id="btnCacheLaptop" title="Cache all frames of this session into laptop memory for smooth offline scrubbing">💾 Cache to Laptop</button>
+            <button type="button" class="btn-secondary-action" id="btnExportSession" title="Export session metadata and download JSON to laptop">📥 Export Manifest</button>
+            <button type="button" class="btn-secondary-action" id="btnSyncHub" title="Optional: send recorded session to Central Server">☁️ Backup to Server</button>
 
             <span style="font-size:0.75rem; color:var(--text-muted); margin-left:4px;">Speed:</span>
 
@@ -1027,6 +1028,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         playbackBufferBadge: document.getElementById('playbackBufferBadge'),
 
         btnSyncHub: document.getElementById('btnSyncHub'),
+        btnCacheLaptop: document.getElementById('btnCacheLaptop'),
+        btnExportSession: document.getElementById('btnExportSession'),
 
         btnSyncMode: document.getElementById('btnSyncMode'),
 
@@ -1617,9 +1620,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
         if (el.btnSyncHub) {
-
           el.btnSyncHub.addEventListener('click', triggerSyncHub);
-
+        }
+        if (el.btnCacheLaptop) {
+          el.btnCacheLaptop.addEventListener('click', cacheSessionToLaptop);
+        }
+        if (el.btnExportSession) {
+          el.btnExportSession.addEventListener('click', exportSessionManifest);
         }
 
 
@@ -2948,7 +2955,119 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
 
-      async function startPrebuffering() {
+            function getFormattedTimestamp(meta, devIdx) {
+        if (meta && Array.isArray(meta.timestamps) && meta.timestamps.length >= devIdx && devIdx >= 1) {
+          const tsVal = meta.timestamps[devIdx - 1];
+          if (typeof tsVal === 'number' && !isNaN(tsVal)) {
+            const d = new Date(tsVal * 1000);
+            const timeStr = d.toTimeString().split(' ')[0] + '.' + String(d.getMilliseconds()).padStart(3, '0');
+            const relSec = (typeof meta.start_ts === 'number')
+              ? Math.max(0, tsVal - meta.start_ts).toFixed(2)
+              : ((devIdx - 1) * 0.1).toFixed(2);
+            return `${timeStr} (+${relSec}s)`;
+          }
+        }
+        return `Frame #${devIdx}`;
+      }
+
+      async function cacheSessionToLaptop() {
+        if (!state.currentSession) return;
+        if (prebufferRunning) {
+          prebufferAbort = true;
+          if (el.btnCacheLaptop) el.btnCacheLaptop.textContent = '⏹️ Aborting...';
+          return;
+        }
+
+        const session = state.currentSession;
+        const streams = [];
+        (session.devices || []).forEach(dev => {
+          (dev.modalities || []).forEach(mod => {
+            streams.push({ dev, mod });
+          });
+        });
+
+        let totalNeeded = 0;
+        streams.forEach(({ mod }) => {
+          totalNeeded += (mod.frames_count || state.maxFrames);
+        });
+
+        if (el.btnCacheLaptop) {
+          el.btnCacheLaptop.textContent = '⏳ Caching to Laptop...';
+          el.btnCacheLaptop.style.borderColor = 'var(--accent-amber)';
+        }
+
+        prebufferAbort = false;
+        prebufferRunning = true;
+
+        const maxFrames = state.maxFrames;
+        const frameIndices = [];
+        for (let i = 1; i <= maxFrames; i++) frameIndices.push(i);
+
+        let queueIdx = 0;
+        let cachedCount = 0;
+        const concurrency = 3;
+
+        async function cacheWorker() {
+          while (queueIdx < frameIndices.length && !prebufferAbort) {
+            const fNum = frameIndices[queueIdx++];
+            for (const { dev, mod } of streams) {
+              if (prebufferAbort) break;
+              const cardMax = mod.frames_count || maxFrames;
+              if (fNum <= cardMax) {
+                const key = `${dev.device_id}:${mod.id}:${fNum}`;
+                if (!frameCache.has(key)) {
+                  await getOrFetchFrame(dev.device_id, dev.date, dev.time, mod.id, fNum);
+                }
+                cachedCount++;
+                if (el.btnCacheLaptop && totalNeeded > 0) {
+                  const pct = Math.round((cachedCount / totalNeeded) * 100);
+                  el.btnCacheLaptop.textContent = `📥 Caching: ${pct}% (${cachedCount}/${totalNeeded})`;
+                }
+              }
+            }
+          }
+        }
+
+        const workers = Array.from({ length: concurrency }, () => cacheWorker());
+        await Promise.all(workers);
+        prebufferRunning = false;
+
+        if (el.btnCacheLaptop) {
+          if (prebufferAbort) {
+            el.btnCacheLaptop.textContent = '💾 Cache to Laptop';
+            el.btnCacheLaptop.style.borderColor = '';
+          } else {
+            el.btnCacheLaptop.textContent = `✅ Cached on Laptop (${cachedCount}f)`;
+            el.btnCacheLaptop.style.borderColor = 'var(--accent-cyan)';
+          }
+        }
+        updateBufferStats();
+      }
+
+      function exportSessionManifest() {
+        if (!state.currentSession) return;
+        const session = state.currentSession;
+        const exportData = {
+          session_id: session.id,
+          date: session.date,
+          time: session.time,
+          label: session.label,
+          duration_seconds: session.duration_seconds,
+          max_frames: session.max_frames,
+          devices: session.devices,
+          stream_metadata: state.streamMetadata,
+          exported_at: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `capture_session_${session.date}_${session.time}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+
+async function startPrebuffering() {
 
         if (!state.currentSession) return;
 
@@ -3470,22 +3589,16 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
         stopPlayback();
-
         renderPlaybackGrid();
-
         updatePlaybackHUD();
 
-        checkHubCacheStatus(sessionId);
-
-
-
-        // Fetch stream timestamps for synchronized playback
-
-        await loadSessionStreamMetadata(session);
-
-
-
-        startPrebuffering();
+        // Fetch stream timestamps for synchronized playback without auto-syncing to server
+        try {
+          await loadSessionStreamMetadata(session);
+        } catch (e) {
+          console.warn('Metadata fetch error:', e);
+        }
+        updatePlaybackView();
 
       }
 
@@ -3544,88 +3657,56 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         let html = '';
 
         streams.forEach(({ dev, mod }) => {
-
           const modType = (mod.modality || 'rgb').toLowerCase();
-
           const maxCount = mod.frames_count || state.maxFrames;
-
           const { frameIdx: initialFrame, deltaMs: initialDelta } = getFrameForStream(dev.device_id, mod.id, maxCount);
-
+          const fKey = `${dev.device_id}:${mod.id}`;
+          const meta = state.streamMetadata[fKey];
+          const frameTsStr = getFormattedTimestamp(meta, initialFrame);
           const key = `${dev.device_id}:${mod.id}:${initialFrame}`;
-
           const initialUrl = frameCache.get(key) || `${dev.tunnel_url || hubBaseUrl}/api/session/${dev.date}/${dev.time}/${mod.id}/frame/${initialFrame}`;
 
-
-
           let badgeContent = `Frame ${initialFrame} / ${maxCount}`;
-
           if (state.timeSyncEnabled) {
-
             const deltaFormatted = (initialDelta >= 0 ? '+' : '') + initialDelta + 'ms';
-
             const color = Math.abs(initialDelta) <= 60 ? 'var(--accent-cyan)' : 'var(--accent-amber)';
-
             badgeContent += ` <span style="color:${color}; font-size:0.7rem; font-weight:600; margin-left:4px;">(Δ${deltaFormatted})</span>`;
-
           }
 
-
-
           html += `
-
             <div class="playback-card"
-
                  data-device-id="${escapeHtml(dev.device_id)}"
-
                  data-date="${escapeHtml(dev.date)}"
-
                  data-time="${escapeHtml(dev.time)}"
-
                  data-modality="${escapeHtml(mod.id)}"
-
                  data-max-frames="${maxCount}">
-
               <div class="playback-card-header">
-
                 <div class="playback-card-title">
-
                   <span class="status-indicator"></span>
-
                   <span style="font-weight:700;">${escapeHtml(dev.device_name || dev.device_id)}</span>
-
                   <span class="device-id-tag">${escapeHtml(dev.device_id)}</span>
-
                 </div>
-
-                <span class="playback-card-modality ${modType}">${escapeHtml(mod.modality || modType).toUpperCase()}</span>
-
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <span class="sensor-frames-total" title="Total frames collected by this sensor">📊 ${maxCount} frames collected</span>
+                  <span class="playback-card-modality ${modType}">${escapeHtml(mod.modality || modType).toUpperCase()}</span>
+                </div>
               </div>
 
-              
-
-              <div class="playback-card-body">
-
+              <div class="playback-card-body" style="position:relative;">
                 <img src="${initialUrl}" alt="${escapeHtml(mod.name || mod.id)}" class="playback-frame-img" loading="eager" />
-
+                <div class="card-timestamp-overlay">⏱️ ${frameTsStr}</div>
               </div>
 
-
-
-              <div class="playback-card-footer">
-
-                <span style="color:var(--text-main); font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(mod.name || mod.id)}">${escapeHtml(mod.name || mod.id)}</span>
-
-                <span class="card-frame-badge">${badgeContent}</span>
-
+              <div class="playback-card-footer" style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="color:var(--text-main); font-weight:600; font-size:0.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${escapeHtml(mod.name || mod.id)}">${escapeHtml(mod.name || mod.id)}</span>
+                <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
+                  <span class="card-frame-badge" style="font-weight:700;">${badgeContent}</span>
+                  <span class="card-ts-label" style="font-size:0.72rem; color:var(--text-muted); font-family:monospace;">${frameTsStr}</span>
+                </div>
               </div>
-
             </div>
-
           `;
-
         });
-
-
 
         el.playbackGrid.innerHTML = html;
 
@@ -3710,74 +3791,52 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
         const cards = document.querySelectorAll('.playback-card');
-
         cards.forEach(card => {
-
           const devId = card.dataset.deviceId;
-
           const date = card.dataset.date;
-
           const time = card.dataset.time;
-
           const mod = card.dataset.modality;
-
           const cardMax = parseInt(card.dataset.maxFrames, 10) || state.maxFrames;
 
-
-
           const { frameIdx: devIdx, deltaMs } = getFrameForStream(devId, mod, cardMax);
-
+          const fKey = `${devId}:${mod}`;
+          const meta = state.streamMetadata[fKey];
+          const frameTsStr = getFormattedTimestamp(meta, devIdx);
           const key = `${devId}:${mod}:${devIdx}`;
 
-
-
           const img = card.querySelector('.playback-frame-img');
-
           if (img) {
-
             if (frameCache.has(key)) {
-
               img.src = frameCache.get(key);
-
             } else {
-
               const directUrl = `${((state.currentSession?.devices || []).find(d => d.device_id === devId)?.tunnel_url) || hubBaseUrl}/api/session/${date}/${time}/${mod}/frame/${devIdx}`;
-
               img.src = directUrl;
-
               getOrFetchFrame(devId, date, time, mod, devIdx);
-
             }
-
           }
 
+          const overlay = card.querySelector('.card-timestamp-overlay');
+          if (overlay) {
+            overlay.textContent = `⏱️ ${frameTsStr}`;
+          }
 
+          const tsLabel = card.querySelector('.card-ts-label');
+          if (tsLabel) {
+            tsLabel.textContent = frameTsStr;
+          }
 
           const badge = card.querySelector('.card-frame-badge');
-
           if (badge) {
-
             if (state.timeSyncEnabled) {
-
               const deltaFormatted = (deltaMs >= 0 ? '+' : '') + deltaMs + 'ms';
-
               const color = Math.abs(deltaMs) <= 60 ? 'var(--accent-cyan)' : 'var(--accent-amber)';
-
               badge.innerHTML = `Frame ${devIdx} / ${cardMax} <span style="color:${color}; font-size:0.7rem; font-weight:600; margin-left:4px;">(Δ${deltaFormatted})</span>`;
-
             } else {
-
               badge.textContent = `Frame ${devIdx} / ${cardMax}`;
-
             }
-
           }
-
         });
-
       }
-
-
 
       function updatePlaybackHUD() {
 
