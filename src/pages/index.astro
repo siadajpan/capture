@@ -770,6 +770,14 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
       let hubBaseUrl = '';
 
+      const frameCache = new Map();
+      let prebufferAbort = false;
+      let prebufferRunning = false;
+      let syncPollingInterval = null;
+      let scrubRafId = null;
+      let lastFrameTime = 0;
+      let playbackAnimFrameId = null;
+
 
 
       const FLEET_NODE_DEFAULTS = [
@@ -1483,13 +1491,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
         // Playback Events
 
         if (el.playbackSessionSelect) {
-
-          el.playbackSessionSelect.addEventListener('change', (e) => {
-
-            selectPlaybackSession(e.target.value);
-
-          });
-
+          const onSelectSession = (e) => {
+            if (e.target && e.target.value) {
+              selectPlaybackSession(e.target.value);
+            }
+          };
+          el.playbackSessionSelect.addEventListener('change', onSelectSession);
+          el.playbackSessionSelect.addEventListener('input', onSelectSession);
         }
 
 
@@ -2623,11 +2631,11 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           if (el.playbackViewport) el.playbackViewport.style.display = 'flex';
 
           if (!state.playbackSessions || state.playbackSessions.length === 0) {
-
             loadPlaybackSessions();
-
+          } else if (state.currentSession) {
+            renderPlaybackGrid();
+            updatePlaybackView();
           }
-
         } else {
 
           // modality mode
@@ -2737,7 +2745,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
               let cluster = clusterMap.get(sKey);
               if (!cluster) {
                 for (const c of clusterMap.values()) {
-                  if (c.date === date && Math.abs(c.duration_seconds - duration) <= 3.0 && c.label === label) {
+                  const alreadyHasDev = c.devices && c.devices.some(d => d.device_id === target.id);
+                  if (!alreadyHasDev && c.date === date && Math.abs(c.duration_seconds - duration) <= 3.0 && c.label === label) {
                     cluster = c;
                     break;
                   }
@@ -2820,7 +2829,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
             return;
           }
 
-          let html = '';
+          let html = '<option value="" disabled selected>-- Select a Recorded Session --</option>';
           state.playbackSessions.forEach(s => {
             const timeFormatted = (s.time || '').replace(/-/g, ':');
             const dur = s.duration_seconds ? `${s.duration_seconds.toFixed(1)}s` : '--';
@@ -2829,15 +2838,13 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           });
           el.playbackSessionSelect.innerHTML = html;
 
-          if (autoSelectFirst || !state.currentSession) {
-            selectPlaybackSession(state.playbackSessions[0].id);
-          } else {
-            const exists = state.playbackSessions.some(s => s.id === state.currentSession.id);
-            if (exists) {
-              el.playbackSessionSelect.value = state.currentSession.id;
-            } else {
-              selectPlaybackSession(state.playbackSessions[0].id);
-            }
+          const toSelect = (state.currentSession && state.playbackSessions.some(s => s.id === state.currentSession.id))
+            ? state.currentSession.id
+            : (autoSelectFirst && state.playbackSessions.length > 0 ? state.playbackSessions[0].id : '');
+
+          if (toSelect) {
+            el.playbackSessionSelect.value = toSelect;
+            selectPlaybackSession(toSelect);
           }
         } catch (err) {
           console.error('Error loading playback sessions:', err);
@@ -3321,6 +3328,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
       async function loadSessionStreamMetadata(session) {
 
+        state.commonDuration = Math.max(0.1, session.duration_seconds || (state.maxFrames / 10.0));
+        state.commonStartTs = 0.0;
+        state.commonEndTs = state.commonDuration;
         state.streamMetadata = {};
 
         const promises = [];
@@ -4873,7 +4883,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
                   class="btn-hotspot-toggle ${edge.hotspot_enabled !== false ? 'btn-hotspot-off' : 'btn-hotspot-on'}" 
 
-                  onclick="window.toggleEdgeHotspot('${edge.device_id}', ${edge.hotspot_enabled === false})"
+                  onclick="window.toggleEdgeHotspot('${edge.device_id}', ${edge.hotspot_enabled === false}, event)"
 
                   title="${edge.hotspot_enabled !== false ? `Turn off ${hotspotSSID} to save battery` : `Turn on ${hotspotSSID}`}">
 
@@ -4991,11 +5001,9 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
 
-      window.toggleEdgeHotspot = async function(deviceId, targetState) {
-
+      window.toggleEdgeHotspot = async function(deviceId, targetState, ev) {
         try {
-
-          const btn = event?.currentTarget;
+          const btn = (ev && ev.currentTarget) ? ev.currentTarget : (typeof window !== 'undefined' && window.event ? window.event.currentTarget : null);
 
           if (btn) {
 
