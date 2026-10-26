@@ -732,6 +732,7 @@ class HLKLD2410SDriver:
 
     def _get_font(self, size, bold=False):
         candidate_paths = [
+            "/home/pi/DejaVuSans-Bold.ttf" if bold else "/home/pi/DejaVuSans.ttf",
             "/home/pi/arialbd.ttf" if bold else "/home/pi/arial.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
@@ -789,12 +790,12 @@ class HLKLD2410SDriver:
         img = Image.new("RGB", (w, h), color=(13, 17, 23))
         draw = ImageDraw.Draw(img)
 
-        font_giant = self._get_font(72, bold=True)
-        font_unit  = self._get_font(28, bold=True)
+        font_giant = self._get_font(72, bold=False)
+        font_unit  = self._get_font(28, bold=False)
         font_sub   = self._get_font(15, bold=False)
-        font_badge = self._get_font(12, bold=True)
+        font_badge = self._get_font(12, bold=False)
         font_meta  = self._get_font(11, bold=False)
-        font_gate  = self._get_font(11, bold=True)
+        font_gate  = self._get_font(11, bold=False)
         font_val   = self._get_font(10, bold=False)
 
         def _text_size(txt, fnt):
@@ -810,27 +811,6 @@ class HLKLD2410SDriver:
         hdr_title = "HLK-LD2410S 24GHz mmWave Radar"
         draw.text((16, 10), hdr_title, fill=(226, 232, 240), font=font_badge)
 
-        # Status badge pill on right
-        if detected:
-            badge_bg = (16, 50, 36)
-            badge_border = (34, 197, 94)
-            badge_text_col = (74, 222, 128)
-            badge_txt = st_text.upper()
-        else:
-            badge_bg = (30, 41, 59)
-            badge_border = (71, 85, 105)
-            badge_text_col = (148, 163, 184)
-            badge_txt = "STANDBY / NO TARGET"
-
-        bw, _ = _text_size(badge_txt, font_badge)
-        pill_w = bw + 20
-        pill_x1 = w - pill_w - 16
-        pill_y1 = 7
-        pill_x2 = w - 16
-        pill_y2 = 29
-        draw.rectangle([pill_x1, pill_y1, pill_x2, pill_y2], fill=badge_bg, outline=badge_border, width=1)
-        draw.text((pill_x1 + 10, pill_y1 + 4), badge_txt, fill=badge_text_col, font=font_badge)
-
         # 2. Hero Distance Section (37..195) - Clean centered distance readout
         hero_center_y = 115
         gate_idx = min(8, int(dist_cm / 75.0)) if (dist_cm and dist_cm > 0) else -1
@@ -839,14 +819,22 @@ class HLKLD2410SDriver:
             num_str = f"{d_m:.2f}"
             unit_str = "m"
             num_w, num_h = _text_size(num_str, font_giant)
-            unit_w, _ = _text_size(unit_str, font_unit)
+            unit_w, unit_h = _text_size(unit_str, font_unit)
 
             total_w = num_w + 8 + unit_w
             num_x = (w - total_w) // 2
             num_y = hero_center_y - (num_h // 2)
 
+            if hasattr(font_giant, "getmetrics") and hasattr(font_unit, "getmetrics"):
+                ascent_g, _ = font_giant.getmetrics()
+                ascent_u, _ = font_unit.getmetrics()
+                baseline_y = num_y + ascent_g
+                unit_y = baseline_y - ascent_u
+            else:
+                unit_y = num_y + num_h - unit_h - 4
+
             draw.text((num_x, num_y), num_str, fill=(56, 189, 248), font=font_giant)
-            draw.text((num_x + num_w + 8, num_y + num_h - 26), unit_str, fill=(148, 163, 184), font=font_unit)
+            draw.text((num_x + num_w + 8, unit_y), unit_str, fill=(148, 163, 184), font=font_unit)
         else:
             standby_str = "--"
             num_w, num_h = _text_size(standby_str, font_giant)
