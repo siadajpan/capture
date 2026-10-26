@@ -2474,7 +2474,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
           }
           const edge = state.edges.find(e => e.device_id === deviceId);
           const targetBase = (edge && edge.tunnel_url) ? edge.tunnel_url : hubBaseUrl;
-          const url = (edge && edge.tunnel_url) ? ${targetBase}/api/hotspot : ${hubBaseUrl}/api/edges//hotspot;
+          const url = (edge && edge.tunnel_url) ? `${targetBase}/api/hotspot` : `${hubBaseUrl}/api/edges/${deviceId}/hotspot`;
           const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
