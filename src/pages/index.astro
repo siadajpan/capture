@@ -2663,167 +2663,214 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
       async function loadPlaybackSessions(autoSelectFirst = true) {
+        if (el.playbackSessionSelect) {
+          el.playbackSessionSelect.innerHTML = '<option value="">Loading recorded sessions...</option>';
+        }
 
         try {
+          const targets = new Map();
+          if (hubBaseUrl) {
+            targets.set('hub', { id: 'hub', name: 'Hub Gateway', url: hubBaseUrl });
+          }
+          state.edges.forEach(e => {
+            if (e.online && e.tunnel_url) {
+              targets.set(e.device_id, { id: e.device_id, name: e.device_name || e.device_id, url: e.tunnel_url });
+            }
+          });
+          const configuredNodes = (clientConfig && clientConfig.fleet_nodes && clientConfig.fleet_nodes.length > 0)
+            ? clientConfig.fleet_nodes
+            : FLEET_NODE_DEFAULTS;
+          configuredNodes.forEach(n => {
+            if (n.url && !targets.has(n.id)) {
+              targets.set(n.id, n);
+            }
+          });
 
-          const res = await fetch(`${hubBaseUrl}/api/recordings/sessions`);
+          const rawEdgeSessions = [];
+          let hubClusters = [];
 
-          if (!res.ok) throw new Error('Status ' + res.status);
+          const queryPromises = Array.from(targets.values()).map(async target => {
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), 4500);
+            try {
+              let res = await fetch(`${target.url}/api/recordings/sessions`, { signal: controller.signal });
+              if (!res.ok) {
+                res = await fetch(`${target.url}/api/sessions`, { signal: controller.signal });
+              }
+              clearTimeout(tid);
+              if (!res.ok) return;
+              const data = await res.json();
+              if (Array.isArray(data.sessions)) {
+                data.sessions.forEach(s => {
+                  if (s.devices && Array.isArray(s.devices)) {
+                    hubClusters.push(s);
+                  } else {
+                    rawEdgeSessions.push({
+                      target,
+                      date: s.date,
+                      time: s.time,
+                      path: s.path,
+                      manifest: s.manifest || {}
+                    });
+                  }
+                });
+              }
+            } catch (_) {
+              clearTimeout(tid);
+            }
+          });
 
-          const data = await res.json();
+          await Promise.allSettled(queryPromises);
 
-          state.playbackSessions = data.sessions || [];
+          let finalSessions = [...hubClusters];
 
+          if (rawEdgeSessions.length > 0) {
+            const clusterMap = new Map();
+            rawEdgeSessions.forEach(item => {
+              const { target, date, time, manifest } = item;
+              const sKey = `${date}_${time}`;
+              const label = manifest.label || 'Recording Session';
+              const duration = manifest.duration_seconds || 0;
+              const framesRecorded = manifest.frames_recorded || {};
+              const sensors = manifest.sensors || [];
 
+              let cluster = clusterMap.get(sKey);
+              if (!cluster) {
+                for (const c of clusterMap.values()) {
+                  if (c.date === date && Math.abs(c.duration_seconds - duration) <= 3.0 && c.label === label) {
+                    cluster = c;
+                    break;
+                  }
+                }
+              }
+
+              if (!cluster) {
+                cluster = {
+                  id: `session_${sKey}`,
+                  date: date,
+                  time: time,
+                  label: label,
+                  duration_seconds: duration,
+                  max_frames: 0,
+                  devices: []
+                };
+                clusterMap.set(sKey, cluster);
+              }
+
+              const modalities = sensors.map(s => {
+                const count = framesRecorded[s.id] || 0;
+                return {
+                  id: s.id,
+                  modality: s.modality || s.id,
+                  name: s.name || s.id,
+                  frames_count: count
+                };
+              });
+
+              const devMax = Math.max(0, ...Object.values(framesRecorded).map(Number));
+              if (devMax > cluster.max_frames) {
+                cluster.max_frames = devMax;
+              }
+              if (duration > cluster.duration_seconds) {
+                cluster.duration_seconds = duration;
+              }
+
+              const existingDev = cluster.devices.find(d => d.device_id === target.id);
+              if (!existingDev) {
+                cluster.devices.push({
+                  device_id: target.id,
+                  device_name: target.name || target.id,
+                  tunnel_url: target.url,
+                  date: date,
+                  time: time,
+                  modalities: modalities
+                });
+              }
+            });
+
+            clusterMap.forEach(c => {
+              const dup = finalSessions.find(fs => fs.id === c.id || (fs.date === c.date && fs.time === c.time));
+              if (!dup) {
+                finalSessions.push(c);
+              }
+            });
+          }
+
+          finalSessions.sort((a, b) => {
+            const dtA = `${a.date} ${a.time}`.replace(/-/g, ':');
+            const dtB = `${b.date} ${b.time}`.replace(/-/g, ':');
+            return dtB.localeCompare(dtA);
+          });
+
+          state.playbackSessions = finalSessions;
 
           if (!el.playbackSessionSelect) return;
 
-
-
           if (state.playbackSessions.length === 0) {
-
             el.playbackSessionSelect.innerHTML = '<option value="">No recorded sessions found</option>';
-
             if (el.playbackGrid) {
-
               el.playbackGrid.innerHTML = `
-
                 <div class="empty-state" style="grid-column: 1 / -1; padding: 40px 16px;">
-
                   <p>No recorded sessions found on connected edge devices.</p>
-
                   <p style="font-size:0.75rem; color:var(--text-muted); margin-top:8px;">Start a recording from the REC button to create your first session.</p>
-
                 </div>
-
               `;
-
             }
-
-            if (el.playbackSessionMetaBadge) el.playbackSessionMetaBadge.textContent = '0 frames • 0s';
-
+            if (el.playbackSessionMetaBadge) el.playbackSessionMetaBadge.textContent = '0 frames - 0s';
             return;
-
           }
-
-
 
           let html = '';
-
           state.playbackSessions.forEach(s => {
-
             const timeFormatted = (s.time || '').replace(/-/g, ':');
-
             const dur = s.duration_seconds ? `${s.duration_seconds.toFixed(1)}s` : '--';
-
             const devCount = (s.devices || []).length;
-
-            html += `<option value="${escapeHtml(s.id)}">${escapeHtml(s.date)} ${escapeHtml(timeFormatted)} • ${escapeHtml(s.label || 'Session')} • ${s.max_frames} frames (${dur}, ${devCount} devs)</option>`;
-
+            html += `<option value="${escapeHtml(s.id)}">${escapeHtml(s.date)} ${escapeHtml(timeFormatted)} | ${escapeHtml(s.label || 'Session')} | ${s.max_frames} frames (${dur}, ${devCount} devs)</option>`;
           });
-
           el.playbackSessionSelect.innerHTML = html;
 
-
-
           if (autoSelectFirst || !state.currentSession) {
-
             selectPlaybackSession(state.playbackSessions[0].id);
-
           } else {
-
             const exists = state.playbackSessions.some(s => s.id === state.currentSession.id);
-
             if (exists) {
-
               el.playbackSessionSelect.value = state.currentSession.id;
-
             } else {
-
               selectPlaybackSession(state.playbackSessions[0].id);
-
             }
-
           }
-
         } catch (err) {
-
           console.error('Error loading playback sessions:', err);
-
           if (el.playbackSessionSelect) {
-
-            el.playbackSessionSelect.innerHTML = '<option value="">Failed to fetch sessions from Hub</option>';
-
+            el.playbackSessionSelect.innerHTML = '<option value="">Failed to fetch sessions from edge fleet</option>';
           }
-
         }
-
       }
 
 
 
-      // ==============================================================================
-
-      // Playback Studio & Frame Scrubbing Engine (In-Memory Buffer + Frame-Paced Playback)
-
-      // ==============================================================================
-
-
-
-      const frameCache = new Map(); // key: `${deviceId}:${modality}:${devIdx}` -> blob URL
-
-      let prebufferAbort = false;
-
-      let prebufferRunning = false;
-
-      let playbackAnimFrameId = null;
-
-      let lastFrameTime = 0;
-
-      let scrubRafId = null;
-
-      let syncPollingInterval = null;
-
-
-
       async function getOrFetchFrame(devId, date, time, mod, devIdx) {
-
         const key = `${devId}:${mod}:${devIdx}`;
-
         if (frameCache.has(key)) {
-
           return frameCache.get(key);
-
         }
 
-        const url = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
-
+        const dev = (state.currentSession?.devices || []).find(d => d.device_id === devId);
+        const edgeBase = (dev && dev.tunnel_url) ? dev.tunnel_url : hubBaseUrl;
+        const url = `${edgeBase}/api/session/${date}/${time}/${mod}/frame/${devIdx}`;
         try {
-
           const res = await fetch(url);
-
           if (res.ok) {
-
             const blob = await res.blob();
-
             const blobUrl = URL.createObjectURL(blob);
-
             frameCache.set(key, blobUrl);
-
             updateBufferStats();
-
             return blobUrl;
-
           }
-
         } catch (e) {
-
           // fetch error fallback
-
         }
-
         return url;
-
       }
 
 
@@ -3284,7 +3331,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
             const streamKey = `${dev.device_id}:${mod.id}`;
 
-            const url = `${hubBaseUrl}/api/recordings/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/frames`;
+            const url = `${dev.tunnel_url || hubBaseUrl}/api/session/${dev.date}/${dev.time}/${mod.id}/frames`;
 
             promises.push(
 
@@ -3496,7 +3543,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
           const key = `${dev.device_id}:${mod.id}:${initialFrame}`;
 
-          const initialUrl = frameCache.get(key) || `${hubBaseUrl}/proxy/recording/${dev.device_id}/${dev.date}/${dev.time}/${mod.id}/${initialFrame}`;
+          const initialUrl = frameCache.get(key) || `${dev.tunnel_url || hubBaseUrl}/api/session/${dev.date}/${dev.time}/${mod.id}/frame/${initialFrame}`;
 
 
 
@@ -3684,7 +3731,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
             } else {
 
-              const directUrl = `${hubBaseUrl}/proxy/recording/${devId}/${date}/${time}/${mod}/${devIdx}`;
+              const directUrl = `${((state.currentSession?.devices || []).find(d => d.device_id === devId)?.tunnel_url) || hubBaseUrl}/api/session/${date}/${time}/${mod}/frame/${devIdx}`;
 
               img.src = directUrl;
 
