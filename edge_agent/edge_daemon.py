@@ -831,8 +831,8 @@ class HLKLD2410SDriver:
         draw.rectangle([pill_x1, pill_y1, pill_x2, pill_y2], fill=badge_bg, outline=badge_border, width=1)
         draw.text((pill_x1 + 10, pill_y1 + 4), badge_txt, fill=badge_text_col, font=font_badge)
 
-        # 2. Hero Distance Section (37..195)
-        hero_center_y = 108
+        # 2. Hero Distance Section (37..195) - Clean centered distance readout
+        hero_center_y = 115
         gate_idx = min(8, int(dist_cm / 75.0)) if (dist_cm and dist_cm > 0) else -1
         if detected and dist_cm and dist_cm > 0:
             d_m = dist_cm / 100.0
@@ -843,21 +843,14 @@ class HLKLD2410SDriver:
 
             total_w = num_w + 8 + unit_w
             num_x = (w - total_w) // 2
-            num_y = hero_center_y - (num_h // 2) - 8
+            num_y = hero_center_y - (num_h // 2)
 
             draw.text((num_x, num_y), num_str, fill=(56, 189, 248), font=font_giant)
-            draw.text((num_x + num_w + 8, num_y + num_h - 32), unit_str, fill=(148, 163, 184), font=font_unit)
-
-            sub_info = f"Nearest Target: {dist_cm} cm | Gate {gate_idx} ({gate_idx*0.75:.2f}-{(gate_idx+1)*0.75:.2f}m)"
-            sw, _ = _text_size(sub_info, font_sub)
-            draw.text(((w - sw) // 2, num_y + num_h + 8), sub_info, fill=(148, 163, 184), font=font_sub)
+            draw.text((num_x + num_w + 8, num_y + num_h - 26), unit_str, fill=(148, 163, 184), font=font_unit)
         else:
-            num_str = "--"
-            num_w, num_h = _text_size(num_str, font_giant)
-            draw.text(((w - num_w) // 2, hero_center_y - (num_h // 2) - 10), num_str, fill=(71, 85, 105), font=font_giant)
-            sub_info = "Waiting for presence / movement within 6.75m range..."
-            sw, _ = _text_size(sub_info, font_sub)
-            draw.text(((w - sw) // 2, hero_center_y + 30), sub_info, fill=(100, 116, 139), font=font_sub)
+            standby_str = "--"
+            num_w, num_h = _text_size(standby_str, font_giant)
+            draw.text(((w - num_w) // 2, hero_center_y - (num_h // 2)), standby_str, fill=(71, 85, 105), font=font_giant)
 
         # Divider line
         draw.line([20, 195, w - 20, 195], fill=(30, 41, 59), width=1)
