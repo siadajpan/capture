@@ -1484,11 +1484,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         const queryTargets = [...configuredNodes];
 
-        if (hubBaseUrl && !queryTargets.some(n => n.url === hubBaseUrl)) {
-
-          queryTargets.push({ id: 'custom-hub', name: 'Custom Hub', url: hubBaseUrl });
-
-        }
+        
 
 
 
@@ -2413,9 +2409,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         try {
           const targets = new Map();
-          if (hubBaseUrl) {
-            targets.set('hub', { id: 'hub', name: 'Hub Gateway', url: hubBaseUrl });
-          }
+
           state.edges.forEach(e => {
             if (e.online && e.tunnel_url) {
               targets.set(e.device_id, { id: e.device_id, name: e.device_name || e.device_id, url: e.tunnel_url });
