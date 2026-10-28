@@ -992,20 +992,49 @@ class SensorDriver:
         self.modality = sensor_cfg.get("modality", "rgb")
         self.sensor_id = sensor_cfg.get("id", "sensor-0")
         self.name = sensor_cfg.get("name", "Sensor")
-        self.width = sensor_cfg.get("width", 640)
-        self.height = sensor_cfg.get("height", 480)
         self.fps = sensor_cfg.get("fps", 15)
         self.device_node = sensor_cfg.get("device", "/dev/video0")
-        # Pi Camera Module v2 (Sony IMX219) has native max resolution of 3280x2464 (8.08 MP, 4:3 full FOV)
-        if "camerav2" in self.sensor_id.lower() or "imx219" in self.name.lower() or "camerav2" in self.name.lower():
-            if self.width <= 1920 and self.height <= 1080:
-                self.width = 3280
-                self.height = 2464
-                logger.info(f"[{self.sensor_id}] Configured Pi Camera Module v2 for highest resolution: 3280x2464")
+        is_camerav2 = "camerav2" in self.sensor_id.lower() or "imx219" in self.name.lower() or "camerav2" in self.name.lower()
+        if is_camerav2:
+            # Dual-mode pipeline: 640x480 for ultra-lightweight live stream, 3280x2464 for full-res recording
+            self.stream_width = 640
+            self.stream_height = 480
+            self.record_width = 3280
+            self.record_height = 2464
+            self.width = self.stream_width
+            self.height = self.stream_height
+            logger.info(f"[{self.sensor_id}] Initialized dual pipeline: Stream=640x480, Record=3280x2464 (Full 8MP)")
+        else:
+            self.width = sensor_cfg.get("width", 640)
+            self.height = sensor_cfg.get("height", 480)
+            self.stream_width = self.width
+            self.stream_height = self.height
+            self.record_width = self.width
+            self.record_height = self.height
+        self._is_recording = False
         self.backend = None
         self.camera_obj = None
         self.use_fallback = False
         self._init_hardware()
+
+    def set_recording_mode(self, is_rec):
+        if getattr(self, "_is_recording", False) == is_rec:
+            return
+        self._is_recording = is_rec
+        if hasattr(self, "record_width") and (self.record_width != self.stream_width or self.record_height != self.stream_height):
+            new_w = self.record_width if is_rec else self.stream_width
+            new_h = self.record_height if is_rec else self.stream_height
+            logger.info(f"[{self.sensor_id}] Switching mode to {'RECORDING (Full 8MP ' + str(new_w) + 'x' + str(new_h) + ')' if is_rec else 'STREAMING (640x480)'}")
+            self.width = new_w
+            self.height = new_h
+            if self.backend == "rpicam_pipe" and getattr(self, "rpicam_proc", None):
+                try:
+                    self.rpicam_proc.terminate()
+                    self.rpicam_proc.wait(timeout=1.0)
+                except Exception:
+                    pass
+                self.rpicam_proc = None
+                time.sleep(0.3)
 
     def _read_exact(self, pipe, size, timeout=2.5):
         import select
@@ -1635,6 +1664,11 @@ class CollectionManager:
                     self.frame_counts[sensor.sensor_id] = 0
                 self.frame_timestamps = {sensor.sensor_id: [] for sensor in self.sensors}
 
+                # Switch sensors to full-resolution recording mode
+                for s in self.sensors:
+                    if hasattr(s, "set_recording_mode"):
+                        s.set_recording_mode(True)
+
                 # Write session metadata
                 metadata = {
                     "session_id": self.session_id,
@@ -1689,6 +1723,10 @@ class CollectionManager:
             if self.thread:
                 self.thread.join(timeout=3.0)
             self.is_recording = False
+            # Switch sensors back to lightweight preview/streaming mode
+            for s in self.sensors:
+                if hasattr(s, "set_recording_mode"):
+                    s.set_recording_mode(False)
             duration = time.time() - self.session_start_time
 
             # Update session manifest with final stats
@@ -2127,7 +2165,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 "id": s.sensor_id,
                 "modality": s.modality,
                 "name": s.name,
-                "resolution": f"{s.width}x{s.height}",
+                "resolution": f"{s.stream_width}x{s.stream_height} (Stream) / {s.record_width}x{s.record_height} (Save)" if getattr(s, "record_width", s.width) != getattr(s, "stream_width", s.width) else f"{s.width}x{s.height}",
                 "fps": s.fps,
                 "backend": getattr(s, "backend", "none")
             }
@@ -2184,7 +2222,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                 "id": s.sensor_id,
                 "modality": s.modality,
                 "name": s.name,
-                "resolution": f"{s.width}x{s.height}",
+                "resolution": f"{s.stream_width}x{s.stream_height} (Stream) / {s.record_width}x{s.record_height} (Save)" if getattr(s, "record_width", s.width) != getattr(s, "stream_width", s.width) else f"{s.width}x{s.height}",
                 "fps": s.fps,
                 "backend": getattr(s, "backend", "none")
             }
