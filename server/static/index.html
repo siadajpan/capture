@@ -4,9 +4,9 @@ Continuous video streaming over 4G consumes <strong>5–15 MB per minute</strong
               To avoid high carrier costs, live streaming is limited to a chosen preview window, after which it automatically returns to single-frame snapshot mode.
 </div> </div> </div> <label style="font-size:0.82rem; font-weight:600; margin-bottom:8px; display:block; color:var(--text-main);">Select Live Stream Duration:</label> <div class="duration-pills-row" style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;"> <button type="button" class="pill data-dur-btn" data-dur="5">5s (Quick Check)</button> <button type="button" class="pill active data-dur-btn" data-dur="10">10s (Default)</button> <button type="button" class="pill data-dur-btn" data-dur="20">20s</button> <button type="button" class="pill data-dur-btn" data-dur="30">30s</button> <button type="button" class="pill data-dur-btn" data-dur="60">60s (1m)</button> </div> <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:22px;"> <button type="button" class="btn-secondary-action" id="cancelDataSaverBtn" style="padding:8px 16px; font-size:0.85rem;">Cancel</button> <button type="button" class="submit-btn" id="confirmStartStreamBtn" style="padding:8px 18px; font-size:0.85rem; font-weight:700; background:linear-gradient(135deg, #00e5ff, #00b0ff); color:#000;">
 ▶️ Start 10s Live Stream
-</button> </div> </div> </div> </div> <!-- Recording & Fleet Management Modal --> <div class="modal-backdrop" id="modalBackdrop"> <div class="modal-card wide-modal"> <div class="modal-header"> <div class="modal-header-tabs"> <button type="button" class="modal-tab-btn active" id="tabOverviewBtn" data-tab="overview"> <span>??</span> <span>Recording</span> </button> <button type="button" class="modal-tab-btn" id="tabFleetBtn" data-tab="fleet"> <span>??</span> <span>Fleet (<span id="modalFleetBadge">0/0</span>)</span> </button> </div> <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button> </div> <div class="modal-body"> <!-- TAB 1: RECORDING --> <div class="modal-tab-pane active" id="tabPaneOverview"> <div class="menu-rec-section" style="text-align: center; padding: 36px 24px;"> <div class="rec-section-header" style="justify-content: center; gap: 12px; margin-bottom: 10px;"> <h4 style="font-size: 1.15rem; margin: 0;">?? Edge Synchronized Recording</h4> <span class="badge-tag" id="menuRecBadge">IDLE</span> </div> <p class="rec-section-desc" style="max-width: 520px; margin: 0 auto 28px;">
+</button> </div> </div> </div> </div> <!-- Recording & Fleet Management Modal --> <div class="modal-backdrop" id="modalBackdrop"> <div class="modal-card wide-modal"> <div class="modal-header"> <div class="modal-header-tabs"> <button type="button" class="modal-tab-btn active" id="tabOverviewBtn" data-tab="overview"> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4" fill="#ef4444"></circle></svg> <span>Recording</span> </button> <button type="button" class="modal-tab-btn" id="tabFleetBtn" data-tab="fleet"> <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg> <span>Fleet (<span id="modalFleetBadge">0/0</span>)</span> </button> </div> <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button> </div> <div class="modal-body"> <!-- TAB 1: RECORDING --> <div class="modal-tab-pane active" id="tabPaneOverview"> <div class="menu-rec-section" style="text-align: center; padding: 36px 24px;"> <div class="rec-section-header" style="justify-content: center; gap: 12px; margin-bottom: 10px;"> <h4 style="font-size: 1.15rem; margin: 0; display: inline-flex; align-items: center; gap: 8px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="3" fill="#ef4444"></circle></svg> Edge Synchronized Recording</h4> <span class="badge-tag" id="menuRecBadge">IDLE</span> </div> <p class="rec-section-desc" style="max-width: 520px; margin: 0 auto 28px;">
 Starts synchronized local full-resolution frame and radar recording simultaneously across all connected edge nodes to internal SD card storage.
-</p> <div class="rec-controls-bar" style="display: flex; justify-content: center; margin: 28px 0;"> <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn" style="padding: 20px 56px; font-size: 1.25rem; font-weight: 700; min-width: 300px; border-radius: 14px; justify-content: center; align-items: center; gap: 14px; box-shadow: 0 8px 24px rgba(239, 68, 68, 0.25);"> <div class="record-symbol" style="width: 18px; height: 18px;"></div> <span id="modalCollectBtnText">Start Recording</span> </button> </div> <div class="storage-path-box" style="display: inline-block; margin-top: 8px;"> <span class="path-title">Internal Edge File Pattern:</span> <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code> </div> </div> </div> <!-- TAB 2: FLEET AVAILABILITY & TUNNELS --> <div class="modal-tab-pane" id="tabPaneFleet"> <div class="fleet-header-summary"> <div class="fleet-stats"> <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span> <span class="stat-pill online-pill"><strong id="summaryOnlineEdges">0</strong> Available Online</span> </div> <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"> <button type="button" class="pill-btn-refresh" id="clearAllFleetStorageBtn" onclick="window.clearAllFleetRecordings(event)" title="Delete all recorded sessions across all fleet SD cards" style="border-color: rgba(239, 68, 68, 0.45); color: #fca5a5;"> <span>??? Clean All SD Cards</span> </button> <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path> </svg> <span>Ping / Refresh</span> </button> </div> </div> <div class="fleet-cards-list" id="fleetCardsContainer"> <!-- Dynamically populated --> </div> </div> </div> </div> </div> <!-- Client-Side Dashboard Script --> <script>
+</p> <div class="rec-controls-bar" style="display: flex; justify-content: center; margin: 28px 0;"> <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn" style="padding: 20px 56px; font-size: 1.25rem; font-weight: 700; min-width: 300px; border-radius: 14px; justify-content: center; align-items: center; gap: 14px; box-shadow: 0 8px 24px rgba(239, 68, 68, 0.25);"> <div class="record-symbol" style="width: 18px; height: 18px;"></div> <span id="modalCollectBtnText">Start Recording</span> </button> </div> <div class="storage-path-box" style="display: inline-block; margin-top: 8px;"> <span class="path-title">Internal Edge File Pattern:</span> <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code> </div> </div> </div> <!-- TAB 2: FLEET AVAILABILITY & TUNNELS --> <div class="modal-tab-pane" id="tabPaneFleet"> <div class="fleet-header-summary"> <div class="fleet-stats"> <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span> <span class="stat-pill online-pill"><strong id="summaryOnlineEdges">0</strong> Available Online</span> </div> <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;"> <button type="button" class="pill-btn-refresh" id="clearAllFleetStorageBtn" onclick="window.clearAllFleetRecordings(event)" title="Delete all recorded sessions across all fleet SD cards" style="border-color: rgba(239, 68, 68, 0.45); color: #fca5a5;"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> <span>Clean All SD Cards</span> </button> <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices"> <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"> <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path> </svg> <span>Ping / Refresh</span> </button> </div> </div> <div class="fleet-cards-list" id="fleetCardsContainer"> <!-- Dynamically populated --> </div> </div> </div> </div> </div> <!-- Client-Side Dashboard Script --> <script>
 
     (function () {
 
@@ -4060,15 +4060,15 @@ async function startPrebuffering() {
           const tunnelUrl = edge.tunnel_url || defaultTunnelMap[edge.device_id] || hubBaseUrl;
           const net = edge.network || {};
           let netLabel = edge.host ? `${edge.host}:${edge.port}` : 'Default';
-          let netIcon = '??';
+          let netIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>';
           if (net.type === 'hotspot') {
-            netIcon = '??';
-            netLabel = `Hotspot (${escapeHtml(net.ssid || 'Wi-Fi')}) ? ${escapeHtml(net.ip || edge.host)}`;
+            netIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>';
+            netLabel = `Hotspot (${escapeHtml(net.ssid || 'Wi-Fi')}) &bull; ${escapeHtml(net.ip || edge.host)}`;
           } else if (net.type === '5g') {
-            netIcon = '??';
-            netLabel = `4G/5G Cellular (${escapeHtml(net.interface || 'usb0')}) ? ${escapeHtml(net.ip || edge.host)}`;
+            netIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M2 20h20"></path><path d="M5 20v-4"></path><path d="M9 20v-8"></path><path d="M13 20V8"></path><path d="M17 20V4"></path></svg>';
+            netLabel = `4G/5G Cellular (${escapeHtml(net.interface || 'usb0')}) &bull; ${escapeHtml(net.ip || edge.host)}`;
           } else if (net.type === 'ethernet') {
-            netIcon = '??';
+            netIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="2"></circle></svg>';
             netLabel = `Ethernet (${escapeHtml(net.ip || edge.host)})`;
           }
 
@@ -4088,8 +4088,8 @@ async function startPrebuffering() {
           const pingLabel = isGateway ? 'Direct Tunnel' : (pingVal !== undefined ? `${pingVal}ms ping` : 'Active');
           const lastSeenStr = edge.last_seen ? timeAgo(edge.last_seen) : 'Never';
           const linkBadgeText = isOnline
-            ? (isGateway ? `?? 4G TUNNEL ONLINE` : (has4G ? `?? 4G CELLULAR (${pingLabel})` : `?? ${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`))
-            : `? OFFLINE (${lastSeenStr})`;
+            ? (isGateway ? `4G TUNNEL ONLINE` : (has4G ? `4G CELLULAR (${pingLabel})` : `${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`))
+            : `OFFLINE (${lastSeenStr})`;
 
           return `
             <div class="fleet-device-card ${isOnline ? 'online' : 'offline'}">
@@ -4109,12 +4109,12 @@ async function startPrebuffering() {
               <!-- Per-Device Cloudflare Tunnel Row -->
               <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; background:rgba(14, 165, 233, 0.08); border:1px solid rgba(14, 165, 233, 0.25); border-radius:8px; padding:8px 12px; margin:8px 0;">
                 <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
-                  <span style="font-size:0.72rem; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap;">?? Tunnel:</span>
+                  <span style="font-size:0.72rem; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; display:inline-flex; align-items:center; gap:5px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg> Tunnel:</span>
                   <code style="font-size:0.82rem; color:#e2e8f0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(tunnelUrl)}</code>
                 </div>
                 <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
                   <button type="button" class="copy-btn-tunnel" style="padding:4px 10px; font-size:0.75rem;" onclick="navigator.clipboard && navigator.clipboard.writeText('${escapeHtml(tunnelUrl)}'); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy', 1500);">Copy</button>
-                  <a href="${escapeHtml(tunnelUrl)}/api/status" target="_blank" rel="noopener" class="open-link-btn" style="padding:4px 8px; font-size:0.75rem; text-decoration:none;" title="Open Device Tunnel Status">?</a>
+                  <a href="${escapeHtml(tunnelUrl)}/api/status" target="_blank" rel="noopener" class="open-link-btn" style="padding:4px 8px; font-size:0.75rem; text-decoration:none;" title="Open Device Tunnel Status" style="display:inline-flex; align-items:center;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg></a>
                 </div>
               </div>
 
@@ -4124,31 +4124,31 @@ async function startPrebuffering() {
                   <span><strong>Connection:</strong> ${netLabel}</span>
                 </div>
                 <div class="fleet-detail-item">
-                  <span>??</span>
+                  <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg></span>
                   <span><strong>Sensors:</strong> ${sensorDesc}</span>
                 </div>
                 <div class="fleet-detail-item">
-                  <span>??</span>
+                  <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><rect x="4" y="2" width="16" height="20" rx="2"></rect><circle cx="12" cy="14" r="4"></circle><line x1="12" y1="6" x2="12.01" y2="6"></line></svg></span>
                   <span><strong>SD Storage:</strong> ${storageDesc}</span>
                 </div>
                 <div class="fleet-detail-item">
-                  <span>??</span>
+                  <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg></span>
                   <span><strong>Status:</strong> ${isOnline ? (col.is_recording ? `Recording (#${col.duration_seconds || 0}s)` : 'Standby / Ready') : 'Unreachable'}</span>
                 </div>
               </div>
 
               <div class="fleet-hotspot-control">
                 <div class="hotspot-status-label">
-                  <span>?? Wi-Fi Hotspot:</span>
+                  <span style="display:inline-flex; align-items:center; gap:5px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg> Wi-Fi Hotspot:</span>
                   <span class="hotspot-badge ${edge.hotspot_enabled !== false ? 'active' : 'disabled'}">
-                    ${edge.hotspot_enabled !== false ? `?? ${hotspotSSID} (Active)` : `? ${hotspotSSID} (Disabled)`}
+                    ${edge.hotspot_enabled !== false ? `${hotspotSSID} (Active)` : `${hotspotSSID} (Disabled)`}
                   </span>
                 </div>
                 <button
                   class="btn-hotspot-toggle ${edge.hotspot_enabled !== false ? 'btn-hotspot-off' : 'btn-hotspot-on'}"
                   onclick="window.toggleEdgeHotspot('${edge.device_id}', ${edge.hotspot_enabled === false}, event)"
                   title="${edge.hotspot_enabled !== false ? `Turn off ${hotspotSSID} to save battery` : `Turn on ${hotspotSSID}`}">
-                  ${edge.hotspot_enabled !== false ? `? Turn OFF ${hotspotSSID}` : `?? Turn ON ${hotspotSSID}`}
+                  ${edge.hotspot_enabled !== false ? `Turn OFF ${hotspotSSID}` : `Turn ON ${hotspotSSID}`}
                 </button>
               </div>
 
@@ -4166,8 +4166,10 @@ async function startPrebuffering() {
                   type="button"
                   class="btn-action-remove"
                   onclick="window.clearEdgeRecordings('${edge.device_id}', event)"
-                  title="Delete all recorded sessions from this device's SD card">
-                  ??? Clean SD Drive (Remove Recordings)
+                  title="Delete all recorded sessions from this device's SD card"
+                  style="display:inline-flex; align-items:center; gap:6px;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  <span>Clean SD Storage</span>
                 </button>
               </div>
             </div>
@@ -4190,7 +4192,7 @@ async function startPrebuffering() {
         const origText = btn ? btn.textContent : '';
         if (btn) {
           btn.disabled = true;
-          btn.textContent = '? Cleaning SD...';
+          btn.textContent = 'Cleaning SD...';
         }
         try {
           const res = await fetch(`${targetUrl}/api/sessions/clear`, {
@@ -4201,7 +4203,7 @@ async function startPrebuffering() {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           const data = await res.json();
           if (btn) {
-            btn.textContent = `? Removed ${data.sessions_removed || 0} sessions (${data.freed_mb || 0} MB)`;
+            btn.textContent = `Cleaned ${data.sessions_removed || 0} sessions (${data.freed_mb || 0} MB)`;
           }
           await pollData();
           if (state.viewMode === 'playback') {
@@ -4215,7 +4217,7 @@ async function startPrebuffering() {
           setTimeout(() => {
             if (btn) {
               btn.disabled = false;
-              btn.textContent = origText || '??? Clean SD Drive (Remove Recordings)';
+              btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> <span>Clean SD Storage</span>';
             }
           }, 2500);
         }
@@ -4227,7 +4229,7 @@ async function startPrebuffering() {
         const origHtml = btn ? btn.innerHTML : '';
         if (btn) {
           btn.disabled = true;
-          btn.innerHTML = '<span>? Cleaning All SD Cards...</span>';
+          btn.innerHTML = '<span>Cleaning All SD Cards...</span>';
         }
         const urls = ['https://fleet1.capture.me.uk', 'https://fleet2.capture.me.uk', 'https://fleet3.capture.me.uk'];
         state.edges.forEach(e => {
@@ -4250,7 +4252,7 @@ async function startPrebuffering() {
           } catch (_) {}
         }));
         if (btn) {
-          btn.innerHTML = `<span>? Cleaned (${totalRemoved} sessions, ${totalFreedMb.toFixed(1)} MB)</span>`;
+          btn.innerHTML = `<span>Cleaned (${totalRemoved} sessions, ${totalFreedMb.toFixed(1)} MB)</span>`;
         }
         await pollData();
         state.playbackSessions = [];
@@ -4260,7 +4262,7 @@ async function startPrebuffering() {
         setTimeout(() => {
           if (btn) {
             btn.disabled = false;
-            btn.innerHTML = origHtml || '<span>??? Clean All SD Cards</span>';
+            btn.innerHTML = origHtml || '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> <span>Clean All SD Cards</span>';
           }
         }, 3000);
       };
