@@ -927,7 +927,7 @@ class HLKLD2410SDriver:
 
         import io
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85)
+        img.save(buf, format="JPEG", quality=70)
         return buf.getvalue()
 
     def get_spectrum_data(self):
@@ -961,36 +961,84 @@ class HLKLD2410SDriver:
         with self.lock:
             return (self.latest_raw_ts, self.latest_raw_packet)
 
+    def _trigger_async_render(self):
+        if getattr(self, "_is_rendering", False):
+            return
+        self._is_rendering = True
+        def _bg_worker():
+            try:
+                self._last_rendered_dist = self.distance_cm or 0
+                frame = self.render_radar_frame()
+                if frame:
+                    self.latest_jpeg = frame
+                self.last_render_time = time.time()
+            except Exception as e:
+                logger.error(f"[radar] BG render error: {e}")
+            finally:
+                self._is_rendering = False
+        t = threading.Thread(target=_bg_worker, daemon=True)
+        t.start()
+
     def get_jpeg_frame(self, force=False):
         now = time.time()
         # If force=True (snapshot / refresh request) or first run, render fresh frame immediately
-        if force or self.latest_jpeg is None:
+        if (force or self.latest_jpeg is None) and not getattr(self, "_is_rendering", False):
             try:
+                self._is_rendering = True
                 self._last_rendered_dist = self.distance_cm or 0
                 self.latest_jpeg = self.render_radar_frame()
                 self.last_render_time = now
             except Exception as e:
                 logger.error(f"[radar] Render frame error: {e}")
+            finally:
+                self._is_rendering = False
             return self.latest_jpeg
 
-        # During continuous streaming / recording (force=False):
-        # Update frame at up to 5 FPS (0.2s interval) whenever packets arrive, or at least every 0.5s for clock
-        dist_changed = abs((self.distance_cm or 0) - getattr(self, "_last_rendered_dist", -999)) >= 1
+        # During continuous streaming / recording: NEVER block the caller!
+        # Render asynchronously in background thread at up to 1-2 FPS
         time_since_render = now - getattr(self, "last_render_time", 0.0)
-        should_render = (time_since_render >= 0.2 and (dist_changed or getattr(self, "last_update_time", 0.0) > getattr(self, "last_render_time", 0.0))) or (time_since_render >= 0.5)
+        dist_changed = abs((self.distance_cm or 0) - getattr(self, "_last_rendered_dist", -999)) >= 2
+        if (time_since_render >= 1.0 or dist_changed) and not getattr(self, "_is_rendering", False):
+            self._trigger_async_render()
 
-        if should_render:
-            try:
-                self._last_rendered_dist = self.distance_cm or 0
-                self.latest_jpeg = self.render_radar_frame()
-                self.last_render_time = time.time()
-            except Exception as e:
-                logger.error(f"[radar] BG render error: {e}")
         return self.latest_jpeg
 
     def stop(self):
         self.running = False
 
+
+# ---------------------------------------------------------------------------
+# Pre-rendered Timestamp Glyph Tiles for Low-CPU Edge Devices (Pi Zero)
+# ---------------------------------------------------------------------------
+_TIMESTAMP_TILES_L = None
+_TIMESTAMP_TILES_RGB = None
+
+def _get_timestamp_tiles(mode='L'):
+    global _TIMESTAMP_TILES_L, _TIMESTAMP_TILES_RGB
+    if mode == 'L' and _TIMESTAMP_TILES_L is not None:
+        return _TIMESTAMP_TILES_L
+    if mode != 'L' and _TIMESTAMP_TILES_RGB is not None:
+        return _TIMESTAMP_TILES_RGB
+
+    from PIL import Image, ImageDraw, ImageFont
+    fnt = ImageFont.load_default()
+    tiles = {}
+    for ch in '0123456789 -:.':
+        if mode == 'L':
+            im = Image.new('L', (7, 13), 0)
+            d = ImageDraw.Draw(im)
+            d.text((1, 0), ch, fill=255, font=fnt)
+        else:
+            im = Image.new('RGB', (7, 13), (15, 23, 42))
+            d = ImageDraw.Draw(im)
+            d.text((1, 0), ch, fill=(248, 250, 252), font=fnt)
+        tiles[ch] = im
+
+    if mode == 'L':
+        _TIMESTAMP_TILES_L = tiles
+    else:
+        _TIMESTAMP_TILES_RGB = tiles
+    return tiles
 
 class SensorDriver:
     """Multi-backend hardware sensor driver (picamera, pygame, opencv, raspistill, ydlidar, fallback)."""
@@ -1217,7 +1265,7 @@ class SensorDriver:
                     img = self._decode_v4l2_frame(test_frame)
                     self._overlay_timestamp(img)
                     buf = io.BytesIO()
-                    img.save(buf, format='JPEG', quality=75)
+                    img.save(buf, format='JPEG', quality=70)
                     self.latest_jpeg = buf.getvalue()
                     self._stop_stream = False
                     self.stream_thread = threading.Thread(target=self._v4l2_read_loop, daemon=True)
@@ -1261,45 +1309,32 @@ class SensorDriver:
     def _decode_v4l2_frame(self, raw):
         from PIL import Image
         stride = getattr(self, "stride", self.width)
+        # Crop optical black borders on VD55G1 (804x704 pad -> clean 800x700 or fast downsampled 512x448)
+        if self.width == 804 and self.height == 704:
+            img = Image.frombytes('L', (self.width, self.height), raw, 'raw', 'L', stride, 1)
+            # Ultra-fast single-pass crop & nearest-neighbor downsampling to 512x448 (exact 8:7 aspect ratio)
+            if getattr(self, "record_width", 0) == 512 and getattr(self, "record_height", 0) == 448:
+                return img.resize((512, 448), Image.NEAREST, box=(2, 2, 802, 702))
+            return img.crop((2, 2, 802, 702))
+
         if stride and stride != self.width:
             img = Image.frombytes('L', (self.width, self.height), raw, 'raw', 'L', stride, 1)
         else:
             img = Image.frombytes('L', (self.width, self.height), raw)
-
-        # Crop optical black borders on VD55G1 (804x704 pad -> clean 800x700)
-        if self.width == 804 and self.height == 704:
-            img = img.crop((2, 2, 802, 702))
-            if getattr(self, "record_width", 0) == 512 and getattr(self, "record_height", 0) == 448:
-                img = img.resize((512, 448), Image.BILINEAR)
         return img
 
     def _overlay_timestamp(self, img):
         try:
-            from PIL import ImageDraw
-            draw = ImageDraw.Draw(img)
-            fnt = get_system_font(12, bold=False)
+            tiles = _get_timestamp_tiles(img.mode)
             now_dt = datetime.now()
             ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-
-            if hasattr(draw, "textbbox"):
-                bb = draw.textbbox((0, 0), ts_str, font=fnt)
-                tw, th = bb[2] - bb[0], bb[3] - bb[1]
-            else:
-                tw, th = draw.textsize(ts_str, font=fnt)
-
-            pad_x = 6
-            pad_y = 3
-            x0 = 10
+            cur_x = 10
             y0 = 10
-            x1 = x0 + tw + (pad_x * 2)
-            y1 = y0 + th + (pad_y * 2)
-
-            if img.mode == 'L':
-                draw.rectangle([x0, y0, x1, y1], fill=0, outline=60)
-                draw.text((x0 + pad_x, y0 + pad_y), ts_str, fill=255, font=fnt)
-            else:
-                draw.rectangle([x0, y0, x1, y1], fill=(15, 23, 42), outline=(51, 65, 85))
-                draw.text((x0 + pad_x, y0 + pad_y), ts_str, fill=(248, 250, 252), font=fnt)
+            for ch in ts_str:
+                tile = tiles.get(ch)
+                if tile:
+                    img.paste(tile, (cur_x, y0))
+                cur_x += 7
         except Exception as e:
             logger.debug(f"Overlay timestamp error: {e}")
 
@@ -1467,7 +1502,7 @@ class SensorDriver:
                     img = self._decode_v4l2_frame(raw)
                     self._overlay_timestamp(img)
                     buf = io.BytesIO()
-                    img.save(buf, format='JPEG', quality=75)
+                    img.save(buf, format='JPEG', quality=70)
                     self.latest_jpeg = buf.getvalue()
                     last_encode_time = now
             except Exception:

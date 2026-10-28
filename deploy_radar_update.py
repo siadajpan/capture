@@ -10,7 +10,7 @@ FLEETS = [
     {"name": "fleet3", "url": "https://fleet3.capture.me.uk", "dest": "/home/pi/edge_daemon.py", "service": "edge-daemon"},
 ]
 
-def exec_cmd(url, cmd, max_retries=3):
+def exec_cmd(url, cmd, max_retries=2):
     for attempt in range(max_retries):
         try:
             req = urllib.request.Request(
@@ -45,50 +45,53 @@ for fleet in FLEETS:
     dest_path = fleet.get("dest", "/home/pi/edge_daemon.py")
     svc_name = fleet.get("service", "edge-daemon")
 
-    # 1. Clear target temp file
-    exec_cmd(furl, f"rm -f {dest_path}.b64 {dest_path}.new")
-    
-    # 2. Append chunks
-    for idx, c in enumerate(chunks):
-        cmd = f"printf '%s' '{c}' >> {dest_path}.b64"
-        res = exec_cmd(furl, cmd)
-        if res.get("returncode") != 0:
-            print(f"Error uploading chunk {idx}: {res}")
-            break
-        print(f"  Chunk {idx+1}/{len(chunks)} uploaded")
-
-    # 3. Decode base64 and verify sha256
-    verify_cmd = f"base64 -d {dest_path}.b64 > {dest_path}.new && sha256sum {dest_path}.new"
-    res = exec_cmd(furl, verify_cmd)
-    remote_out = res.get("stdout", "").strip()
-    print(f"  Verification: {remote_out}")
-
-    if expected_hash in remote_out:
-        print(f"  Hash MATCH on {fname}! Moving to {dest_path} and restarting service...")
-        swap_cmd = f"mv {dest_path}.new {dest_path} && rm -f {dest_path}.b64 && sudo systemctl restart {svc_name}"
-        try:
-            res2 = exec_cmd(furl, swap_cmd)
-            print(f"  Service restart result: {res2}")
-        except Exception as restart_ex:
-            print(f"  Restart triggered (daemon exited cleanly as expected: {restart_ex})")
+    try:
+        # 1. Clear target temp file
+        exec_cmd(furl, f"rm -f {dest_path}.b64 {dest_path}.new")
         
-        # Poll status until back online
-        print(f"  Awaiting {fname} service recovery...")
-        recovered = False
-        for attempt in range(15):
-            time.sleep(2)
+        # 2. Append chunks
+        for idx, c in enumerate(chunks):
+            cmd = f"printf '%s' '{c}' >> {dest_path}.b64"
+            res = exec_cmd(furl, cmd)
+            if res.get("returncode") != 0:
+                print(f"Error uploading chunk {idx}: {res}")
+                break
+            print(f"  Chunk {idx+1}/{len(chunks)} uploaded")
+
+        # 3. Decode base64 and verify sha256
+        verify_cmd = f"base64 -d {dest_path}.b64 > {dest_path}.new && sha256sum {dest_path}.new"
+        res = exec_cmd(furl, verify_cmd)
+        remote_out = res.get("stdout", "").strip()
+        print(f"  Verification: {remote_out}")
+
+        if expected_hash in remote_out:
+            print(f"  Hash MATCH on {fname}! Moving to {dest_path} and restarting service...")
+            swap_cmd = f"mv {dest_path}.new {dest_path} && rm -f {dest_path}.b64 && sudo systemctl restart {svc_name}"
             try:
-                s_req = urllib.request.Request(f"{furl}/api/status", headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(s_req, timeout=5) as sr:
-                    if sr.status == 200:
-                        print(f"  {fname} is back ONLINE and serving requests!")
-                        recovered = True
-                        break
-            except Exception:
-                pass
-        if not recovered:
-            print(f"  WARNING: {fname} took longer than 30s to respond")
-    else:
-        print(f"  ERROR: Hash mismatch on {fname}! Aborting swap.")
+                res2 = exec_cmd(furl, swap_cmd)
+                print(f"  Service restart result: {res2}")
+            except Exception as restart_ex:
+                print(f"  Restart triggered (daemon exited cleanly as expected: {restart_ex})")
+            
+            # Poll status until back online
+            print(f"  Awaiting {fname} service recovery...")
+            recovered = False
+            for attempt in range(15):
+                time.sleep(2)
+                try:
+                    s_req = urllib.request.Request(f"{furl}/api/status", headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(s_req, timeout=5) as sr:
+                        if sr.status == 200:
+                            print(f"  {fname} is back ONLINE and serving requests!")
+                            recovered = True
+                            break
+                except Exception:
+                    pass
+            if not recovered:
+                print(f"  WARNING: {fname} took longer than 30s to respond")
+        else:
+            print(f"  ERROR: Hash mismatch on {fname}! Aborting swap.")
+    except Exception as ex:
+        print(f"  Skipping {fname} (node currently unreachable: {ex})")
 
 print("\nDeployment complete!")
