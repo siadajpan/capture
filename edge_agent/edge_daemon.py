@@ -1004,21 +1004,29 @@ class SensorDriver:
         self.device_node = sensor_cfg.get("device", "/dev/video0")
         is_camerav2 = "camerav2" in self.sensor_id.lower() or "imx219" in self.name.lower() or "camerav2" in self.name.lower()
         if is_camerav2:
-            # Dual-mode pipeline: 640x480 for ultra-lightweight live stream, 3280x2464 for full-res recording
-            self.stream_width = 640
-            self.stream_height = 480
-            self.record_width = 3280
-            self.record_height = 2464
+            # Optimal 15 FPS hardware pipeline: 1280x720 (720p HD) directly from VideoCore ISP
+            self.stream_width = 1280
+            self.stream_height = 720
+            self.record_width = 1280
+            self.record_height = 720
             self.width = self.stream_width
             self.height = self.stream_height
-            logger.info(f"[{self.sensor_id}] Initialized dual pipeline: Stream=640x480, Record=3280x2464 (Full 8MP)")
+            logger.info(f"[{self.sensor_id}] Initialized hardware pipeline: 1280x720 @ {self.fps}fps")
         else:
             self.width = sensor_cfg.get("width", 640)
             self.height = sensor_cfg.get("height", 480)
-            self.stream_width = self.width
-            self.stream_height = self.height
-            self.record_width = self.width
-            self.record_height = self.height
+            is_steval_g1 = "55g1" in self.sensor_id.lower() or "55g1" in self.name.lower() or (self.width == 804 and self.height == 704)
+            if is_steval_g1:
+                # 512x448 (exact 8:7 aspect ratio) guarantees 15 FPS on Pi Zero single core
+                self.stream_width = 512
+                self.stream_height = 448
+                self.record_width = 512
+                self.record_height = 448
+            else:
+                self.stream_width = self.width
+                self.stream_height = self.height
+                self.record_width = self.width
+                self.record_height = self.height
         self._is_recording = False
         self.backend = None
         self.camera_obj = None
@@ -1261,6 +1269,8 @@ class SensorDriver:
         # Crop optical black borders on VD55G1 (804x704 pad -> clean 800x700)
         if self.width == 804 and self.height == 704:
             img = img.crop((2, 2, 802, 702))
+            if getattr(self, "record_width", 0) == 512 and getattr(self, "record_height", 0) == 448:
+                img = img.resize((512, 448), Image.BILINEAR)
         return img
 
     def _overlay_timestamp(self, img):
@@ -1754,6 +1764,16 @@ class CollectionManager:
                     logger.warning(f"Could not write session_manifest.json: {me}")
 
                 self.stop_event.clear()
+                self._open_handles = {}
+                for s in self.sensors:
+                    if hasattr(s, "get_spectrum_data") and (s.modality == "radar" or getattr(s, "backend", "") == "radar"):
+                        fldr = self.modality_paths.get(s.sensor_id)
+                        if fldr:
+                            try:
+                                self._open_handles[f"{s.sensor_id}_spec"] = open(os.path.join(fldr, "radar_spectrum.jsonl"), "a", encoding="utf-8")
+                                self._open_handles[f"{s.sensor_id}_raw"] = open(os.path.join(fldr, "radar_raw.bin"), "ab")
+                            except Exception as he:
+                                logger.error(f"Error opening persistent radar file handles: {he}")
                 self.is_recording = True
                 self.thread = threading.Thread(target=self._record_worker, daemon=True)
                 self.thread.start()
@@ -1782,6 +1802,14 @@ class CollectionManager:
             if self.thread:
                 self.thread.join(timeout=3.0)
             self.is_recording = False
+            if hasattr(self, "_open_handles") and self._open_handles:
+                for h in self._open_handles.values():
+                    try:
+                        h.flush()
+                        h.close()
+                    except Exception:
+                        pass
+                self._open_handles.clear()
             # Switch sensors back to lightweight preview/streaming mode
             for s in self.sensors:
                 if hasattr(s, "set_recording_mode"):
@@ -1851,14 +1879,18 @@ class CollectionManager:
                     except Exception as e:
                         logger.error(f"Failed to write frame to {file_path}: {e}")
 
-                # Save raw radar packet bitstream & full spectrum JSONL
+                # Save raw radar packet bitstream & full spectrum JSONL using persistent file handles
                 if hasattr(sensor, "get_spectrum_data") and (sensor.modality == "radar" or getattr(sensor, "backend", "") == "radar"):
                     spec = sensor.get_spectrum_data()
                     if spec:
                         try:
-                            spec_file = os.path.join(folder, "radar_spectrum.jsonl")
-                            with open(spec_file, "a", encoding="utf-8") as sf:
-                                sf.write(json.dumps(spec) + "\n")
+                            spec_h = getattr(self, "_open_handles", {}).get(f"{sensor.sensor_id}_spec")
+                            line = json.dumps(spec) + "\n"
+                            if spec_h and not spec_h.closed:
+                                spec_h.write(line)
+                            else:
+                                with open(os.path.join(folder, "radar_spectrum.jsonl"), "a", encoding="utf-8") as sf:
+                                    sf.write(line)
                         except Exception as se:
                             logger.error(f"Failed to write radar spectrum: {se}")
 
@@ -1866,10 +1898,13 @@ class CollectionManager:
                     if raw_pkt:
                         try:
                             import struct
-                            raw_file = os.path.join(folder, "radar_raw.bin")
-                            with open(raw_file, "ab") as rf:
-                                # Header: 8-byte double timestamp, 2-byte uint16 packet length
-                                rf.write(struct.pack("<dH", raw_ts, len(raw_pkt)) + raw_pkt)
+                            raw_h = getattr(self, "_open_handles", {}).get(f"{sensor.sensor_id}_raw")
+                            payload = struct.pack("<dH", raw_ts, len(raw_pkt)) + raw_pkt
+                            if raw_h and not raw_h.closed:
+                                raw_h.write(payload)
+                            else:
+                                with open(os.path.join(folder, "radar_raw.bin"), "ab") as rf:
+                                    rf.write(payload)
                         except Exception as re:
                             logger.error(f"Failed to write radar raw packet: {re}")
 
