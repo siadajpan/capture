@@ -423,6 +423,39 @@ def compute_radar_spectrum_spread(dist_cm, peak_energy=85):
         m_gates[g] = energy if energy >= 6 else 0
     return m_gates
 
+_SYSTEM_FONT_CACHE = {}
+
+def get_system_font(size, bold=False):
+    global _SYSTEM_FONT_CACHE
+    key = (size, bold)
+    if key in _SYSTEM_FONT_CACHE:
+        return _SYSTEM_FONT_CACHE[key]
+    candidate_paths = [
+        "/home/pi/DejaVuSans-Bold.ttf" if bold else "/home/pi/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/home/pi/arialbd.ttf" if bold else "/home/pi/arial.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
+        "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
+        "arial.ttf"
+    ]
+    from PIL import ImageFont
+    for p in candidate_paths:
+        try:
+            f = ImageFont.truetype(p, size)
+            _SYSTEM_FONT_CACHE[key] = f
+            return f
+        except Exception:
+            continue
+    try:
+        f = ImageFont.load_default(size=size)
+    except Exception:
+        f = ImageFont.load_default()
+    _SYSTEM_FONT_CACHE[key] = f
+    return f
+
 class HLKLD2410SDriver:
     """
     High-performance driver for HLK-LD2410S 24GHz mmWave radar sensor.
@@ -731,38 +764,7 @@ class HLKLD2410SDriver:
             time.sleep(1.0)
 
     def _get_font(self, size, bold=False):
-        cache = getattr(self, "_font_cache", None)
-        if cache is None:
-            cache = {}
-            self._font_cache = cache
-        key = (size, bold)
-        if key in cache:
-            return cache[key]
-        candidate_paths = [
-            "/home/pi/DejaVuSans-Bold.ttf" if bold else "/home/pi/DejaVuSans.ttf",
-            "/home/pi/arialbd.ttf" if bold else "/home/pi/arial.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "C:\\Windows\\Fonts\\arialbd.ttf" if bold else "C:\\Windows\\Fonts\\arial.ttf",
-            "C:\\Windows\\Fonts\\segoeuib.ttf" if bold else "C:\\Windows\\Fonts\\segoeui.ttf",
-            "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf",
-            "arial.ttf"
-        ]
-        from PIL import ImageFont
-        for p in candidate_paths:
-            try:
-                f = ImageFont.truetype(p, size)
-                cache[key] = f
-                return f
-            except Exception:
-                continue
-        try:
-            f = ImageFont.load_default(size=size)
-        except Exception:
-            f = ImageFont.load_default()
-        cache[key] = f
-        return f
+        return get_system_font(size, bold)
 
     def render_radar_frame(self):
         try:
@@ -821,6 +823,11 @@ class HLKLD2410SDriver:
 
         hdr_title = "HLK-LD2410S 24GHz mmWave Radar"
         draw.text((16, 10), hdr_title, fill=(226, 232, 240), font=font_badge)
+
+        now_dt = datetime.now()
+        ts_full_str = now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        ts_w, _ = _text_size(ts_full_str, font_badge)
+        draw.text((w - ts_w - 16, 10), ts_full_str, fill=(56, 189, 248), font=font_badge)
 
         # 2. Hero Distance Section (37..195) - Clean centered distance readout
         hero_center_y = 115
@@ -914,9 +921,9 @@ class HLKLD2410SDriver:
         draw.line([0, h - 30, w, h - 30], fill=(30, 41, 59), width=1)
 
         draw.text((20, h - 21), f"PKTS: {pkt_cnt} | 115200 8N1 SPECTRUM ACTIVE", fill=(100, 116, 139), font=font_meta)
-        clock_str = time.strftime("%H:%M:%S")
+        clock_str = now_dt.strftime("%H:%M:%S.%f")[:-3]
         cw, _ = _text_size(clock_str, font_meta)
-        draw.text((w - cw - 20, h - 21), clock_str, fill=(100, 116, 139), font=font_meta)
+        draw.text((w - cw - 20, h - 21), clock_str, fill=(148, 163, 184), font=font_meta)
 
         import io
         buf = io.BytesIO()
@@ -954,30 +961,31 @@ class HLKLD2410SDriver:
         with self.lock:
             return (self.latest_raw_ts, self.latest_raw_packet)
 
-    def get_jpeg_frame(self):
+    def get_jpeg_frame(self, force=False):
         now = time.time()
-        dist_Changed = abs((self.distance_cm or 0) - getattr(self, "_last_rendered_dist", -999)) >= 2
-        min_Wait = 1.2 if dist_Changed else 3.0
-        # Render in a non-blocking background thread if stale so recording loop never blocks on PIL
-        if self.latest_jpeg is None:
+        # If force=True (snapshot / refresh request) or first run, render fresh frame immediately
+        if force or self.latest_jpeg is None:
             try:
                 self._last_rendered_dist = self.distance_cm or 0
                 self.latest_jpeg = self.render_radar_frame()
                 self.last_render_time = now
             except Exception as e:
                 logger.error(f"[radar] Render frame error: {e}")
-        elif (now - self.last_render_time >= min_Wait) and not getattr(self, "_rendering_bg", False):
-            self._rendering_bg = True
-            def _bg_render():
-                try:
-                    self._last_rendered_dist = self.distance_cm or 0
-                    self.latest_jpeg = self.render_radar_frame()
-                    self.last_render_time = time.time()
-                except Exception as e:
-                    logger.error(f"[radar] BG render error: {e}")
-                finally:
-                    self._rendering_bg = False
-            threading.Thread(target=_bg_render, daemon=True).start()
+            return self.latest_jpeg
+
+        # During continuous streaming / recording (force=False):
+        # Update frame at up to 5 FPS (0.2s interval) whenever packets arrive, or at least every 0.5s for clock
+        dist_changed = abs((self.distance_cm or 0) - getattr(self, "_last_rendered_dist", -999)) >= 1
+        time_since_render = now - getattr(self, "last_render_time", 0.0)
+        should_render = (time_since_render >= 0.2 and (dist_changed or getattr(self, "last_update_time", 0.0) > getattr(self, "last_render_time", 0.0))) or (time_since_render >= 0.5)
+
+        if should_render:
+            try:
+                self._last_rendered_dist = self.distance_cm or 0
+                self.latest_jpeg = self.render_radar_frame()
+                self.last_render_time = time.time()
+            except Exception as e:
+                logger.error(f"[radar] BG render error: {e}")
         return self.latest_jpeg
 
     def stop(self):
@@ -1199,6 +1207,7 @@ class SensorDriver:
                 if test_frame and len(test_frame) == self.frame_size:
                     self.backend = "v4l2_pipe"
                     img = self._decode_v4l2_frame(test_frame)
+                    self._overlay_timestamp(img)
                     buf = io.BytesIO()
                     img.save(buf, format='JPEG', quality=75)
                     self.latest_jpeg = buf.getvalue()
@@ -1253,6 +1262,36 @@ class SensorDriver:
         if self.width == 804 and self.height == 704:
             img = img.crop((2, 2, 802, 702))
         return img
+
+    def _overlay_timestamp(self, img):
+        try:
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(img)
+            fnt = get_system_font(12, bold=False)
+            now_dt = datetime.now()
+            ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+            if hasattr(draw, "textbbox"):
+                bb = draw.textbbox((0, 0), ts_str, font=fnt)
+                tw, th = bb[2] - bb[0], bb[3] - bb[1]
+            else:
+                tw, th = draw.textsize(ts_str, font=fnt)
+
+            pad_x = 6
+            pad_y = 3
+            x0 = 10
+            y0 = 10
+            x1 = x0 + tw + (pad_x * 2)
+            y1 = y0 + th + (pad_y * 2)
+
+            if img.mode == 'L':
+                draw.rectangle([x0, y0, x1, y1], fill=0, outline=60)
+                draw.text((x0 + pad_x, y0 + pad_y), ts_str, fill=255, font=fnt)
+            else:
+                draw.rectangle([x0, y0, x1, y1], fill=(15, 23, 42), outline=(51, 65, 85))
+                draw.text((x0 + pad_x, y0 + pad_y), ts_str, fill=(248, 250, 252), font=fnt)
+        except Exception as e:
+            logger.debug(f"Overlay timestamp error: {e}")
 
     def _spawn_rpicam_proc(self):
         rpicam_bin = getattr(self, "_rpicam_bin", "/usr/bin/rpicam-vid")
@@ -1416,6 +1455,7 @@ class SensorDriver:
                 # Rate-limit JPEG compression to target FPS
                 if now - last_encode_time >= min_interval:
                     img = self._decode_v4l2_frame(raw)
+                    self._overlay_timestamp(img)
                     buf = io.BytesIO()
                     img.save(buf, format='JPEG', quality=75)
                     self.latest_jpeg = buf.getvalue()
@@ -1433,10 +1473,10 @@ class SensorDriver:
             return self.radar_driver.get_latest_raw_packet()
         return (0.0, b"")
 
-    def get_jpeg_frame(self):
+    def get_jpeg_frame(self, force=False):
         """Returns raw JPEG bytes for MJPEG streaming or saving."""
         if self.backend == "radar" and getattr(self, "radar_driver", None):
-            return self.radar_driver.get_jpeg_frame()
+            return self.radar_driver.get_jpeg_frame(force=force)
 
         elif self.backend == "ydlidar" and getattr(self, "lidar_driver", None):
             return self.lidar_driver.get_jpeg_frame()
@@ -1489,35 +1529,45 @@ class SensorDriver:
         # Fallback synthetic frame generator
         return self._generate_synthetic_frame()
 
-    def get_stream_jpeg_frame(self):
-        """Returns a small preview JPEG (<=640px wide) for live streaming / snapshots while preserving full 8MP / 2K frame for recording."""
-        raw_full = self.get_jpeg_frame()
-        if not raw_full or (self.width <= 800 and self.height <= 700):
+    def get_stream_jpeg_frame(self, force=False):
+        """Returns a preview JPEG (<=640px wide) with timestamp overlay."""
+        if self.backend == "radar" and getattr(self, "radar_driver", None):
+            return self.radar_driver.get_jpeg_frame(force=force)
+
+        raw_full = self.get_jpeg_frame(force=force)
+        if not raw_full:
+            return raw_full
+
+        # For V4L2 cameras (Pi 1 & 2), the timestamp is already burned directly on raw pixels in _v4l2_read_loop
+        if self.backend == "v4l2_pipe":
             return raw_full
 
         now = time.monotonic()
         cached_ts = getattr(self, "_stream_preview_ts", 0.0)
         cached_preview = getattr(self, "_stream_preview_jpeg", None)
-        if cached_preview and (now - cached_ts) < 0.18:
+        if not force and cached_preview and (now - cached_ts) < 0.15:
             return cached_preview
 
         try:
             from PIL import Image
             im = Image.open(io.BytesIO(raw_full))
-            # Use libjpeg fast C DCT scaling (1/4 or 1/8 scale: 3280x2464 -> 640x480)
-            target_w = 640
-            target_h = max(240, int(round(640 * (self.height / max(self.width, 1)))))
-            im.draft("RGB", (target_w, target_h))
-            im.load()
-            if im.width > 640:
-                im = im.resize((target_w, target_h), Image.BILINEAR)
+            if self.width > 800 or self.height > 700:
+                target_w = 640
+                target_h = max(240, int(round(640 * (self.height / max(self.width, 1)))))
+                im.draft("RGB", (target_w, target_h))
+                im.load()
+                if im.width > 640:
+                    im = im.resize((target_w, target_h), Image.BILINEAR)
+
+            self._overlay_timestamp(im)
             out = io.BytesIO()
-            im.save(out, format="JPEG", quality=70)
+            im.save(out, format="JPEG", quality=75)
             preview = out.getvalue()
             self._stream_preview_jpeg = preview
             self._stream_preview_ts = now
             return preview
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Preview stamp error: {e}")
             return raw_full
 
     def release(self):
@@ -2255,10 +2305,25 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self.send_error(404, f"Sensor or modality '{target}' not found")
             return
 
-        frame = sensor.get_stream_jpeg_frame() if hasattr(sensor, "get_stream_jpeg_frame") else sensor.get_jpeg_frame()
+        if hasattr(sensor, "get_stream_jpeg_frame"):
+            try:
+                frame = sensor.get_stream_jpeg_frame(force=True)
+            except TypeError:
+                frame = sensor.get_stream_jpeg_frame()
+        elif hasattr(sensor, "get_jpeg_frame"):
+            try:
+                frame = sensor.get_jpeg_frame(force=True)
+            except TypeError:
+                frame = sensor.get_jpeg_frame()
+        else:
+            frame = b""
+
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(frame)))
         self.end_headers()
         self.wfile.write(frame)
@@ -2275,7 +2340,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache, private")
         self.end_headers()
 
-        target_delay = 1.0 / max(sensor.fps, 5)
+        target_delay = 1.0 / max(sensor.fps, 5) if sensor.modality != "radar" else 0.2
         try:
             while True:
                 frame_bytes = sensor.get_stream_jpeg_frame() if hasattr(sensor, "get_stream_jpeg_frame") else sensor.get_jpeg_frame()
