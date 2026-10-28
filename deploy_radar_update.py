@@ -65,7 +65,15 @@ for fleet in FLEETS:
         print(f"  Verification: {remote_out}")
 
         if expected_hash in remote_out:
-            print(f"  Hash MATCH on {fname}! Moving to {dest_path} and restarting service...")
+            print(f"  Hash MATCH on {fname}! Updating config and restarting service...")
+            # Set fps to 10 in all sensors in edge_config.json
+            cfg_script = "import json, os; p = '/home/pi/edge_agent/edge_config.json' if os.path.exists('/home/pi/edge_agent/edge_config.json') else '/home/pi/edge_config.json'; d = json.load(open(p)); [s.update({'fps': 10}) for s in d.get('sensors', [])]; json.dump(d, open(p, 'w'), indent=2)"
+            b64_cfg = base64.b64encode(cfg_script.encode()).decode()
+            try:
+                exec_cmd(furl, f"python3 -c \"import base64; exec(base64.b64decode('{b64_cfg}'))\"")
+            except Exception as ce:
+                print(f"  Config update notice: {ce}")
+
             swap_cmd = f"mv {dest_path}.new {dest_path} && rm -f {dest_path}.b64 && sudo systemctl restart {svc_name}"
             try:
                 res2 = exec_cmd(furl, swap_cmd)

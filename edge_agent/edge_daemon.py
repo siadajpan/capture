@@ -491,6 +491,11 @@ class HLKLD2410SDriver:
         self.packets_received = 0
         self.latest_jpeg = None
         self.last_render_time = 0.0
+        try:
+            self.latest_jpeg = self.render_radar_frame()
+            self.last_render_time = time.time()
+        except Exception:
+            pass
 
         # Setup GPIO for presence pin if on Linux/RPi
         self.has_gpio = False
@@ -1048,24 +1053,24 @@ class SensorDriver:
         self.modality = sensor_cfg.get("modality", "rgb")
         self.sensor_id = sensor_cfg.get("id", "sensor-0")
         self.name = sensor_cfg.get("name", "Sensor")
-        self.fps = sensor_cfg.get("fps", 15)
+        self.fps = sensor_cfg.get("fps", 10)
         self.device_node = sensor_cfg.get("device", "/dev/video0")
         is_camerav2 = "camerav2" in self.sensor_id.lower() or "imx219" in self.name.lower() or "camerav2" in self.name.lower()
         if is_camerav2:
-            # Optimal 15 FPS hardware pipeline: 1280x720 (720p HD) directly from VideoCore ISP
-            self.stream_width = 1280
-            self.stream_height = 720
-            self.record_width = 1280
-            self.record_height = 720
+            # VideoCore GPU hardware pipeline: default to configured width/height or 1920x1080
+            self.stream_width = sensor_cfg.get("width", 1920)
+            self.stream_height = sensor_cfg.get("height", 1080)
+            self.record_width = self.stream_width
+            self.record_height = self.stream_height
             self.width = self.stream_width
             self.height = self.stream_height
-            logger.info(f"[{self.sensor_id}] Initialized hardware pipeline: 1280x720 @ {self.fps}fps")
+            logger.info(f"[{self.sensor_id}] Initialized hardware pipeline: {self.width}x{self.height} @ {self.fps}fps")
         else:
             self.width = sensor_cfg.get("width", 640)
             self.height = sensor_cfg.get("height", 480)
             is_steval_g1 = "55g1" in self.sensor_id.lower() or "55g1" in self.name.lower() or (self.width == 804 and self.height == 704)
             if is_steval_g1:
-                # 512x448 (exact 8:7 aspect ratio) guarantees 15 FPS on Pi Zero single core
+                # 512x448 (exact 8:7 aspect ratio) guarantees 10-12 FPS on Pi Zero single core
                 self.stream_width = 512
                 self.stream_height = 448
                 self.record_width = 512
@@ -1340,9 +1345,8 @@ class SensorDriver:
 
     def _spawn_rpicam_proc(self):
         rpicam_bin = getattr(self, "_rpicam_bin", "/usr/bin/rpicam-vid")
-        is_full_res = (self.width >= 3000 or self.height >= 2000)
-        fps = 10 if is_full_res else self.fps
-        quality = "65" if is_full_res else "75"
+        fps = self.fps
+        quality = "70"
         # Native libcamera MJPEG hardware/ISP streaming with true ISP color calibration (AWB, CCM, lens shading)
         cmd = [
             rpicam_bin,
@@ -1888,8 +1892,8 @@ class CollectionManager:
 
     def _record_worker(self):
         """Worker thread recording frames to SD card at specified FPS."""
-        # Calculate target interval (15 FPS default across all cameras/sensors)
-        fps = max([getattr(s, "fps", 15) for s in self.sensors] + [15])
+        # Calculate target interval (10 FPS across all cameras/sensors)
+        fps = max([getattr(s, "fps", 10) for s in self.sensors] + [10])
         interval = 1.0 / fps
 
         while not self.stop_event.is_set():
