@@ -996,6 +996,12 @@ class SensorDriver:
         self.height = sensor_cfg.get("height", 480)
         self.fps = sensor_cfg.get("fps", 15)
         self.device_node = sensor_cfg.get("device", "/dev/video0")
+        # Pi Camera Module v2 (Sony IMX219) has native max resolution of 3280x2464 (8.08 MP, 4:3 full FOV)
+        if "camerav2" in self.sensor_id.lower() or "imx219" in self.name.lower() or "camerav2" in self.name.lower():
+            if self.width <= 1920 and self.height <= 1080:
+                self.width = 3280
+                self.height = 2464
+                logger.info(f"[{self.sensor_id}] Configured Pi Camera Module v2 for highest resolution: 3280x2464")
         self.backend = None
         self.camera_obj = None
         self.use_fallback = False
@@ -1215,29 +1221,13 @@ class SensorDriver:
 
     def _spawn_rpicam_proc(self):
         rpicam_bin = getattr(self, "_rpicam_bin", "/usr/bin/rpicam-vid")
-        # For 2K resolutions (>800px wide), use the VideoCore IV hardware MJPG encoder (/dev/video11)
-        # so 1920x1080 @ 15fps runs in GPU hardware instead of saturating the single-core ARMv6 CPU.
-        if (self.width > 800 or self.height > 700) and os.name != 'nt' and os.path.exists("/dev/video11"):
-            pipeline = (
-                f"{rpicam_bin} -t 0 --inline --mode {self.width}:{self.height}:8 "
-                f"--codec yuv420 --width {self.width} --height {self.height} --framerate {self.fps} -n -o - | "
-                f"v4l2-ctl -d /dev/video11 "
-                f"--set-fmt-video-out=width={self.width},height={self.height},pixelformat=YU12 "
-                f"--set-fmt-video=width={self.width},height={self.height},pixelformat=MJPG "
-                f"--stream-out-mmap --stream-from=- --stream-mmap --stream-to=-"
-            )
-            return subprocess.Popen(
-                pipeline,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=65536
-            )
+        # Native libcamera MJPEG hardware/ISP streaming with true ISP color calibration (AWB, CCM, lens shading)
         cmd = [
             rpicam_bin,
             "-t", "0",
             "--inline",
             "--codec", "mjpeg",
+            "-q", "75",
             "--width", str(self.width),
             "--height", str(self.height),
             "--framerate", str(self.fps),
@@ -1263,7 +1253,7 @@ class SensorDriver:
                     time.sleep(2.0)
                     continue
             try:
-                chunk = self.rpicam_proc.stdout.read(16384)
+                chunk = self.rpicam_proc.stdout.read(65536)
                 if not chunk:
                     try:
                         self.rpicam_proc.terminate()
@@ -1284,6 +1274,8 @@ class SensorDriver:
                     if end_idx == -1:
                         if start_idx > 0:
                             buf = buf[start_idx:]
+                        if len(buf) > 3000000:
+                            buf = buf[-65536:]
                         break
                     self.latest_jpeg = bytes(buf[start_idx:end_idx + 2])
                     buf = buf[end_idx + 2:]
@@ -1460,7 +1452,7 @@ class SensorDriver:
         return self._generate_synthetic_frame()
 
     def get_stream_jpeg_frame(self):
-        """Returns a small preview JPEG (<=640px wide) for live streaming / snapshots while preserving full 2K frame for recording."""
+        """Returns a small preview JPEG (<=640px wide) for live streaming / snapshots while preserving full 8MP / 2K frame for recording."""
         raw_full = self.get_jpeg_frame()
         if not raw_full or (self.width <= 800 and self.height <= 700):
             return raw_full
@@ -1468,21 +1460,21 @@ class SensorDriver:
         now = time.monotonic()
         cached_ts = getattr(self, "_stream_preview_ts", 0.0)
         cached_preview = getattr(self, "_stream_preview_jpeg", None)
-        if cached_preview and (now - cached_ts) < 0.14:
+        if cached_preview and (now - cached_ts) < 0.18:
             return cached_preview
 
         try:
             from PIL import Image
             im = Image.open(io.BytesIO(raw_full))
-            # Use libjpeg fast C DCT scaling (1/4 scale for 1920x1080 -> 480x270)
+            # Use libjpeg fast C DCT scaling (1/4 or 1/8 scale: 3280x2464 -> 640x480)
             target_w = 640
             target_h = max(240, int(round(640 * (self.height / max(self.width, 1)))))
             im.draft("RGB", (target_w, target_h))
             im.load()
             if im.width > 640:
-                im = im.resize((target_w, target_h), Image.NEAREST)
+                im = im.resize((target_w, target_h), Image.BILINEAR)
             out = io.BytesIO()
-            im.save(out, format="JPEG", quality=65)
+            im.save(out, format="JPEG", quality=70)
             preview = out.getvalue()
             self._stream_preview_jpeg = preview
             self._stream_preview_ts = now
