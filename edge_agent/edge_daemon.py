@@ -956,17 +956,21 @@ class HLKLD2410SDriver:
 
     def get_jpeg_frame(self):
         now = time.time()
+        dist_Changed = abs((self.distance_cm or 0) - getattr(self, "_last_rendered_dist", -999)) >= 2
+        min_Wait = 1.2 if dist_Changed else 3.0
         # Render in a non-blocking background thread if stale so recording loop never blocks on PIL
         if self.latest_jpeg is None:
             try:
+                self._last_rendered_dist = self.distance_cm or 0
                 self.latest_jpeg = self.render_radar_frame()
                 self.last_render_time = now
             except Exception as e:
                 logger.error(f"[radar] Render frame error: {e}")
-        elif (now - self.last_render_time >= 0.45) and not getattr(self, "_rendering_bg", False):
+        elif (now - self.last_render_time >= min_Wait) and not getattr(self, "_rendering_bg", False):
             self._rendering_bg = True
             def _bg_render():
                 try:
+                    self._last_rendered_dist = self.distance_cm or 0
                     self.latest_jpeg = self.render_radar_frame()
                     self.last_render_time = time.time()
                 except Exception as e:
