@@ -1731,7 +1731,7 @@ class CollectionManager:
 
         os.makedirs(self.storage_root, exist_ok=True)
 
-    def start_collection(self, session_label=None):
+    def start_collection(self, session_label=None, max_duration_seconds=None):
         with self.lock:
             if self.is_recording:
                 return {
@@ -1760,6 +1760,7 @@ class CollectionManager:
                 self.session_id = f"{date_folder}_{time_folder}"
                 self.session_start_time = time.time()
                 self.session_dir = os.path.join(self.storage_root, date_folder, time_folder)
+                self.max_duration_seconds = float(max_duration_seconds) if max_duration_seconds else None
 
                 # Create modality folders for each sensor
                 self.modality_paths = {}
@@ -1947,6 +1948,19 @@ class CollectionManager:
                         except Exception as re:
                             logger.error(f"Failed to write radar raw packet: {re}")
 
+                # Periodic flush of persistent handles every 50 frames
+                if cnt % 50 == 0:
+                    for h in getattr(self, "_open_handles", {}).values():
+                        try:
+                            h.flush()
+                        except Exception:
+                            pass
+
+            if getattr(self, "max_duration_seconds", None) and (time.time() - self.session_start_time) >= self.max_duration_seconds:
+                logger.info(f"Session {self.session_id} reached duration limit of {self.max_duration_seconds}s. Auto-stopping...")
+                threading.Thread(target=self.stop_collection, daemon=True).start()
+                break
+
             elapsed = time.time() - t0
             sleep_time = interval - elapsed
             if sleep_time > 0:
@@ -2077,12 +2091,15 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                         return
             self._send_json({"error": "No radar sensor active"}, status_code=404)
         elif path == "/api/collection/start":
-            res = self.daemon_ref.collector.start_collection()
+            qs = parse_qs(parsed.query)
+            max_dur = qs.get("duration", [None])[0] or qs.get("max_duration_seconds", [None])[0]
+            label = qs.get("label", [None])[0]
+            res = self.daemon_ref.collector.start_collection(session_label=label, max_duration_seconds=max_dur)
             self._send_json(res)
             if "peer=1" not in parsed.query:
                 threading.Thread(
                     target=self.daemon_ref.broadcast_to_peers,
-                    args=("/api/collection/start?peer=1", b"{}"),
+                    args=(f"/api/collection/start?peer=1{'&duration=' + str(max_dur) if max_dur else ''}", b"{}"),
                     kwargs={"is_recording_state": True},
                     daemon=True
                 ).start()
@@ -2118,15 +2135,17 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         if path == "/api/collection/start":
             content_length = int(self.headers.get('Content-Length', 0))
             label = None
+            max_dur = None
             body = b""
             if content_length > 0:
                 body = self.rfile.read(content_length)
                 try:
                     payload = json.loads(body.decode('utf-8'))
                     label = payload.get("label")
+                    max_dur = payload.get("duration") or payload.get("max_duration_seconds")
                 except Exception:
                     pass
-            res = self.daemon_ref.collector.start_collection(session_label=label)
+            res = self.daemon_ref.collector.start_collection(session_label=label, max_duration_seconds=max_dur)
             self._send_json(res)
             if "peer=1" not in parsed.query:
                 threading.Thread(
