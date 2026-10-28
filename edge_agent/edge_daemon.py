@@ -731,6 +731,13 @@ class HLKLD2410SDriver:
             time.sleep(1.0)
 
     def _get_font(self, size, bold=False):
+        cache = getattr(self, "_font_cache", None)
+        if cache is None:
+            cache = {}
+            self._font_cache = cache
+        key = (size, bold)
+        if key in cache:
+            return cache[key]
         candidate_paths = [
             "/home/pi/DejaVuSans-Bold.ttf" if bold else "/home/pi/DejaVuSans.ttf",
             "/home/pi/arialbd.ttf" if bold else "/home/pi/arial.ttf",
@@ -745,13 +752,17 @@ class HLKLD2410SDriver:
         from PIL import ImageFont
         for p in candidate_paths:
             try:
-                return ImageFont.truetype(p, size)
+                f = ImageFont.truetype(p, size)
+                cache[key] = f
+                return f
             except Exception:
                 continue
         try:
-            return ImageFont.load_default(size=size)
+            f = ImageFont.load_default(size=size)
         except Exception:
-            return ImageFont.load_default()
+            f = ImageFont.load_default()
+        cache[key] = f
+        return f
 
     def render_radar_frame(self):
         try:
@@ -847,14 +858,11 @@ class HLKLD2410SDriver:
         spec_title = "RANGE-GATE RF ENERGY SPECTRUM (0.0 - 6.75m)"
         draw.text((24, 204), spec_title, fill=(203, 213, 225), font=font_badge)
 
-        m_col = (14, 165, 233)   # Cyan (Moving)
-        s_col = (245, 158, 11)   # Amber (Stationary)
-        
-        # Legend
-        draw.rectangle([w - 240, 206, w - 230, 216], fill=m_col)
-        draw.text((w - 225, 204), "Moving", fill=(148, 163, 184), font=font_meta)
-        draw.rectangle([w - 150, 206, w - 140, 216], fill=s_col)
-        draw.text((w - 135, 204), "Stationary", fill=(148, 163, 184), font=font_meta)
+        m_col = (14, 165, 233)   # Cyan (RF Energy)
+
+        # Single RF Energy Legend (HLK-LD2410S outputs unified range-gate energy, not separate stationary gates)
+        draw.rectangle([w - 135, 206, w - 125, 216], fill=m_col)
+        draw.text((w - 120, 204), "RF Energy", fill=(148, 163, 184), font=font_meta)
 
         chart_x0 = 36
         chart_x1 = w - 36
@@ -871,34 +879,23 @@ class HLKLD2410SDriver:
 
         num_gates = 9
         col_width = (chart_x1 - chart_x0) / num_gates
-        bar_width = int(col_width * 0.36)
+        bar_width = int(col_width * 0.56)
 
         for g in range(num_gates):
             gx_center = chart_x0 + int((g + 0.5) * col_width)
             m_energy = m_gates[g] if g < len(m_gates) else 0
-            s_energy = s_gates[g] if g < len(s_gates) else 0
 
-            # Subtle channel slot background
-            m_bx = gx_center - bar_width - 1
+            # Centered single channel slot background
+            m_bx = gx_center - (bar_width // 2)
             draw.rectangle([m_bx, chart_y_top, m_bx + bar_width, chart_y_base], fill=(18, 24, 34))
-            s_bx = gx_center + 1
-            draw.rectangle([s_bx, chart_y_top, s_bx + bar_width, chart_y_base], fill=(18, 24, 34))
 
-            # Moving Bar
+            # RF Energy Bar
             m_bar_h = max(3, int(chart_h * (min(100, max(0, m_energy)) / 100.0))) if m_energy > 0 else 0
             if m_bar_h > 0:
                 draw.rectangle([m_bx, chart_y_base - m_bar_h, m_bx + bar_width, chart_y_base], fill=m_col)
                 if m_energy >= 10:
                     ew, _ = _text_size(str(m_energy), font_val)
                     draw.text((m_bx + (bar_width - ew) // 2, chart_y_base - m_bar_h - 13), str(m_energy), fill=m_col, font=font_val)
-
-            # Stationary Bar
-            s_bar_h = max(3, int(chart_h * (min(100, max(0, s_energy)) / 100.0))) if s_energy > 0 else 0
-            if s_bar_h > 0:
-                draw.rectangle([s_bx, chart_y_base - s_bar_h, s_bx + bar_width, chart_y_base], fill=s_col)
-                if s_energy >= 10:
-                    ew, _ = _text_size(str(s_energy), font_val)
-                    draw.text((s_bx + (bar_width - ew) // 2, chart_y_base - s_bar_h - 13), str(s_energy), fill=s_col, font=font_val)
 
             dist_start = g * 0.75
             gate_lbl = f"G{g}"
@@ -959,13 +956,24 @@ class HLKLD2410SDriver:
 
     def get_jpeg_frame(self):
         now = time.time()
-        min_interval = 1.0 / max(self.fps, 5)
-        if self.latest_jpeg is None or (now - self.last_render_time >= min_interval):
+        # Render in a non-blocking background thread if stale so recording loop never blocks on PIL
+        if self.latest_jpeg is None:
             try:
                 self.latest_jpeg = self.render_radar_frame()
                 self.last_render_time = now
             except Exception as e:
                 logger.error(f"[radar] Render frame error: {e}")
+        elif (now - self.last_render_time >= 0.45) and not getattr(self, "_rendering_bg", False):
+            self._rendering_bg = True
+            def _bg_render():
+                try:
+                    self.latest_jpeg = self.render_radar_frame()
+                    self.last_render_time = time.time()
+                except Exception as e:
+                    logger.error(f"[radar] BG render error: {e}")
+                finally:
+                    self._rendering_bg = False
+            threading.Thread(target=_bg_render, daemon=True).start()
         return self.latest_jpeg
 
     def stop(self):
@@ -989,12 +997,20 @@ class SensorDriver:
         self.use_fallback = False
         self._init_hardware()
 
-    def _read_exact(self, pipe, size):
+    def _read_exact(self, pipe, size, timeout=2.5):
+        import select
         chunks = []
         total = 0
+        fd = pipe.fileno() if hasattr(pipe, "fileno") else None
         while total < size and not getattr(self, "_stop_stream", False):
             try:
-                chunk = pipe.read(min(size - total, 65536))
+                if fd is not None and os.name != "nt":
+                    rlist, _, _ = select.select([fd], [], [], timeout)
+                    if not rlist:
+                        return None
+                    chunk = os.read(fd, min(size - total, 65536))
+                else:
+                    chunk = pipe.read(min(size - total, 65536))
                 if not chunk:
                     return None
                 chunks.append(chunk)
@@ -1020,14 +1036,22 @@ class SensorDriver:
             logger.info(f"[{self.sensor_id}] Initialized YDLIDAR driver on {self.lidar_driver.port} ({self.width}x{self.height} @ {self.fps}fps)")
             return
 
+        is_steval = (
+            "steval" in self.sensor_id.lower()
+            or sensor_type in ["v4l2", "steval", "vd55g0", "vd55g1"]
+            or os.path.exists("/sys/bus/i2c/drivers/vd55g0")
+            or os.path.exists("/sys/bus/i2c/drivers/vd55g1")
+        )
+
         # 0. Try rpicam-vid / libcamera-vid (standard on Bookworm/Bullseye for Raspberry Pi Camera v2 / IMX219)
         rpicam_bin = None
-        for cand in ["/usr/bin/rpicam-vid", "/usr/bin/libcamera-vid", "rpicam-vid", "libcamera-vid"]:
-            if os.path.exists(cand) or (os.name != 'nt' and subprocess.run(["which", cand], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0):
-                rpicam_bin = cand
-                break
+        if not is_steval:
+            for cand in ["/usr/bin/rpicam-vid", "/usr/bin/libcamera-vid", "rpicam-vid", "libcamera-vid"]:
+                if os.path.exists(cand) or (os.name != 'nt' and subprocess.run(["which", cand], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0):
+                    rpicam_bin = cand
+                    break
 
-        if rpicam_bin and (sensor_type in ["rpicam", "libcamera", "camerav2", "imx219"] or not os.path.exists(self.device_node) or sensor_type == "auto"):
+        if rpicam_bin and not is_steval and (sensor_type in ["rpicam", "libcamera", "camerav2", "imx219"] or not os.path.exists(self.device_node) or sensor_type == "auto"):
             try:
                 if os.name != 'nt':
                     try:
@@ -1035,23 +1059,8 @@ class SensorDriver:
                         subprocess.run(["pkill", "-9", "-f", "pipewire"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception:
                         pass
-                cmd = [
-                    rpicam_bin,
-                    "-t", "0",
-                    "--inline",
-                    "--codec", "mjpeg",
-                    "--width", str(self.width),
-                    "--height", str(self.height),
-                    "--framerate", str(self.fps),
-                    "-n",
-                    "-o", "-"
-                ]
-                self.rpicam_proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    bufsize=65536
-                )
+                self._rpicam_bin = rpicam_bin
+                self.rpicam_proc = self._spawn_rpicam_proc()
                 self._stop_stream = False
                 self.stream_thread = threading.Thread(target=self._rpicam_read_loop, daemon=True)
                 self.stream_thread.start()
@@ -1063,7 +1072,7 @@ class SensorDriver:
                         logger.info(f"[{self.sensor_id}] Initialized {rpicam_bin} hardware stream ({self.width}x{self.height} @ {self.fps}fps)")
                         return
                     if self.rpicam_proc.poll() is not None:
-                        err = self.rpicam_proc.stderr.read().decode('utf-8', errors='replace')
+                        err = self.rpicam_proc.stderr.read().decode('utf-8', errors='replace') if self.rpicam_proc.stderr else ""
                         logger.warning(f"[{self.sensor_id}] {rpicam_bin} exited early (code {self.rpicam_proc.returncode}): {err}")
                         break
                     time.sleep(0.1)
@@ -1072,26 +1081,33 @@ class SensorDriver:
                 self._stop_stream = True
                 try:
                     self.rpicam_proc.terminate()
+                    self.rpicam_proc.wait(timeout=1)
                 except Exception:
                     pass
                 self.rpicam_proc = None
             except Exception as e:
                 logger.info(f"[{self.sensor_id}] {rpicam_bin} hardware stream test failed: {e}")
 
-        # 1. Try direct V4L2 stream via v4l2-ctl (best for Unicam / VD55G0 global shutter monochrome)
+        # 1. Try direct V4L2 stream via v4l2-ctl (best for Unicam / VD55G0 / VD55G1 global shutter monochrome)
         if not os.path.exists(self.device_node) and os.name != "nt":
             try:
                 logger.info(f"[{self.sensor_id}] {self.device_node} missing; asserting CAM_GPIO (40/41) high and reloading vd55g0...")
                 subprocess.run(
-                    "sudo raspi-gpio set 40 dh 2>/dev/null; sudo raspi-gpio set 41 dh 2>/dev/null; "
-                    "sudo modprobe -r vd55g0 2>/dev/null; sleep 0.5; sudo modprobe vd55g0 2>/dev/null; sleep 0.5",
-                    shell=True, timeout=5
+                    "sudo modprobe -r bcm2835_unicam vd55g0 2>/dev/null || sudo modprobe -r vd55g0 2>/dev/null; "
+                    "sudo raspi-gpio set 40 op dh 2>/dev/null; sudo raspi-gpio set 41 op dh 2>/dev/null; "
+                    "sleep 0.5; sudo modprobe vd55g0 2>/dev/null; sudo modprobe bcm2835_unicam 2>/dev/null; sleep 0.5",
+                    shell=True, timeout=6
                 )
             except Exception as ex:
                 logger.debug(f"[{self.sensor_id}] vd55g0 auto-reload skipped: {ex}")
 
         if os.path.exists(self.device_node):
             try:
+                # Ensure any prior v4l2-ctl process exits cleanly with SIGINT (VIDIOC_STREAMOFF)
+                if os.name != "nt":
+                    subprocess.run(["pkill", "-2", "-x", "v4l2-ctl"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    time.sleep(0.2)
+
                 # Explicitly configure device format so driver and reader are 100% synchronized
                 try:
                     subprocess.run(
@@ -1132,9 +1148,9 @@ class SensorDriver:
                     ["v4l2-ctl", "-d", self.device_node, "--stream-mmap", "--stream-to=-"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
-                    bufsize=self.frame_size * 2
+                    bufsize=0
                 )
-                test_frame = self._read_exact(self.v4l2_proc.stdout, self.frame_size)
+                test_frame = self._read_exact(self.v4l2_proc.stdout, self.frame_size, timeout=3.0)
                 if test_frame and len(test_frame) == self.frame_size:
                     self.backend = "v4l2_pipe"
                     img = self._decode_v4l2_frame(test_frame)
@@ -1147,66 +1163,35 @@ class SensorDriver:
                     logger.info(f"[{self.sensor_id}] Initialized direct V4L2 streaming on {self.device_node} ({self.width}x{self.height}, stride {self.stride}, {self.frame_size} bytes)")
                     return
                 else:
-                    self.v4l2_proc.terminate()
+                    try:
+                        self.v4l2_proc.send_signal(2)
+                        self.v4l2_proc.wait(timeout=1.0)
+                    except Exception:
+                        try:
+                            self.v4l2_proc.terminate()
+                        except Exception:
+                            pass
+                    self.v4l2_proc = None
+                    if is_steval:
+                        self.backend = "v4l2_pipe"
+                        self._stop_stream = False
+                        self.stream_thread = threading.Thread(target=self._v4l2_read_loop, daemon=True)
+                        self.stream_thread.start()
+                        logger.warning(f"[{self.sensor_id}] Initial V4L2 frame timed out; background V4L2 recovery thread started.")
+                        return
             except Exception as e:
                 logger.info(f"[{self.sensor_id}] V4L2 stream pipe init failed: {e}")
 
-        # 2. Try native Broadcom PiCamera (Raspbian Buster CSI camera)
-        try:
-            import picamera
-            self.camera_obj = picamera.PiCamera()
-            self.camera_obj.resolution = (self.width, self.height)
-            self.camera_obj.framerate = self.fps
-            time.sleep(0.5)
-            self.backend = "picamera"
-            logger.info(f"[{self.sensor_id}] Initialized native Broadcom PiCamera ({self.width}x{self.height} @ {self.fps}fps)")
+        if is_steval and os.name != "nt":
+            self.stride = getattr(self, "stride", self.width)
+            self.frame_size = getattr(self, "frame_size", self.width * self.height)
+            self.v4l2_proc = None
+            self.use_fallback = True
+            self._stop_stream = False
+            self.stream_thread = threading.Thread(target=self._v4l2_read_loop, daemon=True)
+            self.stream_thread.start()
+            logger.warning(f"[{self.sensor_id}] {self.device_node} not ready yet; using fallback until background V4L2 recovery thread detects sensor.")
             return
-        except Exception as e:
-            logger.info(f"[{self.sensor_id}] picamera init not available: {e}")
-
-        # 3. Try Pygame V4L2 Camera (pre-installed on Buster)
-        if os.path.exists(self.device_node):
-            try:
-                import pygame.camera
-                import pygame.image
-                pygame.camera.init()
-                self.camera_obj = pygame.camera.Camera(self.device_node, (self.width, self.height))
-                self.camera_obj.start()
-                self.backend = "pygame"
-                logger.info(f"[{self.sensor_id}] Initialized Pygame V4L2 Camera on {self.device_node}")
-                return
-            except Exception as e:
-                logger.info(f"[{self.sensor_id}] Pygame camera init failed: {e}")
-
-        # 4. Try OpenCV if available
-        if os.path.exists(self.device_node):
-            try:
-                import cv2
-                cap = cv2.VideoCapture(self.device_node)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                cap.set(cv2.CAP_PROP_FPS, self.fps)
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        self.camera_obj = cap
-                        self.backend = "opencv"
-                        logger.info(f"[{self.sensor_id}] Opened OpenCV V4L2 device {self.device_node}")
-                        return
-                    cap.release()
-            except Exception as e:
-                logger.info(f"[{self.sensor_id}] OpenCV init failed: {e}")
-
-        # 5. Try raspistill CLI pipeline
-        if os.path.exists("/usr/bin/raspistill"):
-            try:
-                res = subprocess.run(["raspistill", "-n", "-t", "50", "-w", str(self.width), "-h", str(self.height), "-q", "75", "-o", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3)
-                if res.returncode == 0 and len(res.stdout) > 1000:
-                    self.backend = "raspistill"
-                    logger.info(f"[{self.sensor_id}] Initialized raspistill CLI pipeline")
-                    return
-            except Exception as e:
-                logger.info(f"[{self.sensor_id}] raspistill test failed: {e}")
 
         logger.info(f"[{self.sensor_id}] Hardware camera not opened. Using fallback generator.")
         self.use_fallback = True
@@ -1224,20 +1209,71 @@ class SensorDriver:
             img = img.crop((2, 2, 802, 702))
         return img
 
+    def _spawn_rpicam_proc(self):
+        rpicam_bin = getattr(self, "_rpicam_bin", "/usr/bin/rpicam-vid")
+        # For 2K resolutions (>800px wide), use the VideoCore IV hardware MJPG encoder (/dev/video11)
+        # so 1920x1080 @ 15fps runs in GPU hardware instead of saturating the single-core ARMv6 CPU.
+        if (self.width > 800 or self.height > 700) and os.name != 'nt' and os.path.exists("/dev/video11"):
+            pipeline = (
+                f"{rpicam_bin} -t 0 --inline --mode {self.width}:{self.height}:8 "
+                f"--codec yuv420 --width {self.width} --height {self.height} --framerate {self.fps} -n -o - | "
+                f"v4l2-ctl -d /dev/video11 "
+                f"--set-fmt-video-out=width={self.width},height={self.height},pixelformat=YU12 "
+                f"--set-fmt-video=width={self.width},height={self.height},pixelformat=MJPG "
+                f"--stream-out-mmap --stream-from=- --stream-mmap --stream-to=-"
+            )
+            return subprocess.Popen(
+                pipeline,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=65536
+            )
+        cmd = [
+            rpicam_bin,
+            "-t", "0",
+            "--inline",
+            "--codec", "mjpeg",
+            "--width", str(self.width),
+            "--height", str(self.height),
+            "--framerate", str(self.fps),
+            "-n",
+            "-o", "-"
+        ]
+        return subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=65536
+        )
+
     def _rpicam_read_loop(self):
         buf = bytearray()
         soi = b'\xff\xd8'
         eoi = b'\xff\xd9'
-        while not getattr(self, "_stop_stream", False) and getattr(self, "rpicam_proc", None) and self.rpicam_proc.poll() is None:
+        while not getattr(self, "_stop_stream", False):
+            if not getattr(self, "rpicam_proc", None) or self.rpicam_proc.poll() is not None:
+                try:
+                    self.rpicam_proc = self._spawn_rpicam_proc()
+                except Exception:
+                    time.sleep(2.0)
+                    continue
             try:
-                chunk = self.rpicam_proc.stdout.read(8192)
+                chunk = self.rpicam_proc.stdout.read(16384)
                 if not chunk:
-                    break
+                    try:
+                        self.rpicam_proc.terminate()
+                        self.rpicam_proc.wait(timeout=1.0)
+                    except Exception:
+                        pass
+                    self.rpicam_proc = None
+                    time.sleep(1.0)
+                    continue
                 buf.extend(chunk)
                 while True:
                     start_idx = buf.find(soi)
                     if start_idx == -1:
-                        if len(buf) > 32768:
+                        if len(buf) > 65536:
                             buf = buf[-4:]
                         break
                     end_idx = buf.find(eoi, start_idx + 2)
@@ -1265,22 +1301,83 @@ class SensorDriver:
         target_fps = max(self.fps, 15)
         min_interval = 1.0 / (target_fps * 1.5)
         last_encode_time = 0
+        consecutive_stalls = 0
 
-        while not getattr(self, "_stop_stream", False) and self.v4l2_proc and self.v4l2_proc.poll() is None:
+        while not getattr(self, "_stop_stream", False):
             try:
+                if not os.path.exists(self.device_node):
+                    if os.name != "nt":
+                        try:
+                            subprocess.run(
+                                "sudo modprobe -r bcm2835_unicam vd55g0 2>/dev/null || sudo modprobe -r vd55g0 2>/dev/null; "
+                                "sudo raspi-gpio set 40 op dh 2>/dev/null; sudo raspi-gpio set 41 op dh 2>/dev/null; "
+                                "sleep 0.5; sudo modprobe vd55g0 2>/dev/null; sudo modprobe bcm2835_unicam 2>/dev/null; sleep 0.5",
+                                shell=True, timeout=6
+                            )
+                        except Exception:
+                            pass
+                    if not os.path.exists(self.device_node):
+                        time.sleep(5.0)
+                        continue
+
+                if not self.v4l2_proc or self.v4l2_proc.poll() is not None:
+                    if consecutive_stalls >= 2 and os.name != "nt" and os.path.exists("/sys/bus/i2c/drivers/vd55g0"):
+                        logger.warning(f"[{self.sensor_id}] Multiple V4L2 stalls on vd55g0; reloading vd55g0 + bcm2835_unicam cleanly...")
+                        try:
+                            subprocess.run(
+                                "sudo modprobe -r bcm2835_unicam vd55g0 2>/dev/null || sudo modprobe -r vd55g0 2>/dev/null; "
+                                "sudo raspi-gpio set 40 op dh 2>/dev/null; sudo raspi-gpio set 41 op dh 2>/dev/null; "
+                                "sleep 0.5; sudo modprobe vd55g0 2>/dev/null; sudo modprobe bcm2835_unicam 2>/dev/null; sleep 0.5",
+                                shell=True, timeout=6
+                            )
+                        except Exception:
+                            pass
+                        consecutive_stalls = 0
+                    try:
+                        subprocess.run(
+                            ["v4l2-ctl", "-d", self.device_node, f"--set-fmt-video=width={self.width},height={self.height},pixelformat=GREY"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2
+                        )
+                    except Exception:
+                        pass
+                    self.v4l2_proc = subprocess.Popen(
+                        ["v4l2-ctl", "-d", self.device_node, "--stream-mmap", "--stream-to=-"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                        bufsize=0
+                    )
+                    logger.info(f"[{self.sensor_id}] Respawned v4l2-ctl stream on {self.device_node}")
+
                 # Discard stale backlog if pipe has accumulated older frames
                 pipe_fd = self.v4l2_proc.stdout.fileno()
                 avail = get_pipe_bytes(pipe_fd)
                 if avail > self.frame_size * 2:
                     discard_count = (avail // self.frame_size) - 1
                     if discard_count > 0:
-                        self.v4l2_proc.stdout.read(discard_count * self.frame_size)
+                        self._read_exact(self.v4l2_proc.stdout, discard_count * self.frame_size, timeout=1.0)
 
-                raw = self._read_exact(self.v4l2_proc.stdout, self.frame_size)
+                raw = self._read_exact(self.v4l2_proc.stdout, self.frame_size, timeout=2.5)
                 if not raw or len(raw) < self.frame_size:
-                    time.sleep(0.01)
+                    consecutive_stalls += 1
+                    logger.warning(f"[{self.sensor_id}] V4L2 stream stalled or EOF (count={consecutive_stalls}); stopping v4l2-ctl with SIGINT...")
+                    try:
+                        self.v4l2_proc.send_signal(2)
+                        self.v4l2_proc.wait(timeout=1.0)
+                    except Exception:
+                        try:
+                            self.v4l2_proc.terminate()
+                            self.v4l2_proc.wait(timeout=0.5)
+                        except Exception:
+                            pass
+                    self.v4l2_proc = None
+                    time.sleep(0.3)
                     continue
 
+                consecutive_stalls = 0
+                if getattr(self, "use_fallback", False) or getattr(self, "backend", None) != "v4l2_pipe":
+                    self.use_fallback = False
+                    self.backend = "v4l2_pipe"
+                    logger.info(f"[{self.sensor_id}] Hardware V4L2 stream recovered on {self.device_node}; switched from fallback to live camera.")
                 now = time.time()
                 # Rate-limit JPEG compression to target FPS
                 if now - last_encode_time >= min_interval:
@@ -1358,6 +1455,37 @@ class SensorDriver:
         # Fallback synthetic frame generator
         return self._generate_synthetic_frame()
 
+    def get_stream_jpeg_frame(self):
+        """Returns a small preview JPEG (<=640px wide) for live streaming / snapshots while preserving full 2K frame for recording."""
+        raw_full = self.get_jpeg_frame()
+        if not raw_full or (self.width <= 800 and self.height <= 700):
+            return raw_full
+
+        now = time.monotonic()
+        cached_ts = getattr(self, "_stream_preview_ts", 0.0)
+        cached_preview = getattr(self, "_stream_preview_jpeg", None)
+        if cached_preview and (now - cached_ts) < 0.14:
+            return cached_preview
+
+        try:
+            from PIL import Image
+            im = Image.open(io.BytesIO(raw_full))
+            # Use libjpeg fast C DCT scaling (1/4 scale for 1920x1080 -> 480x270)
+            target_w = 640
+            target_h = max(240, int(round(640 * (self.height / max(self.width, 1)))))
+            im.draft("RGB", (target_w, target_h))
+            im.load()
+            if im.width > 640:
+                im = im.resize((target_w, target_h), Image.NEAREST)
+            out = io.BytesIO()
+            im.save(out, format="JPEG", quality=65)
+            preview = out.getvalue()
+            self._stream_preview_jpeg = preview
+            self._stream_preview_ts = now
+            return preview
+        except Exception:
+            return raw_full
+
     def release(self):
         if self.backend == "radar" and getattr(self, "radar_driver", None):
             try:
@@ -1378,9 +1506,13 @@ class SensorDriver:
         elif self.backend == "v4l2_pipe" and getattr(self, "v4l2_proc", None):
             self._stop_stream = True
             try:
-                self.v4l2_proc.terminate()
+                self.v4l2_proc.send_signal(2)
+                self.v4l2_proc.wait(timeout=0.8)
             except Exception:
-                pass
+                try:
+                    self.v4l2_proc.terminate()
+                except Exception:
+                    pass
         elif self.backend == "picamera" and self.camera_obj:
             try:
                 self.camera_obj.close()
@@ -1600,8 +1732,8 @@ class CollectionManager:
 
     def _record_worker(self):
         """Worker thread recording frames to SD card at specified FPS."""
-        # Calculate target interval
-        fps = 10
+        # Calculate target interval (15 FPS default across all cameras/sensors)
+        fps = max([getattr(s, "fps", 15) for s in self.sensors] + [15])
         interval = 1.0 / fps
 
         while not self.stop_event.is_set():
@@ -1652,6 +1784,52 @@ class CollectionManager:
             sleep_time = interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
+
+    def clear_all_sessions(self):
+        """Stops any active recording and deletes all recorded sessions in storage_root."""
+        import shutil
+        if self.is_recording:
+            try:
+                self.stop_collection()
+            except Exception:
+                pass
+
+        removed_sessions = 0
+        freed_bytes = 0
+        with self.lock:
+            if os.path.exists(self.storage_root):
+                for entry in os.listdir(self.storage_root):
+                    entry_path = os.path.join(self.storage_root, entry)
+                    try:
+                        if os.path.isdir(entry_path):
+                            for root, dirs, files in os.walk(entry_path):
+                                if "session_manifest.json" in files:
+                                    removed_sessions += 1
+                                for fn in files:
+                                    try:
+                                        freed_bytes += os.path.getsize(os.path.join(root, fn))
+                                    except Exception:
+                                        pass
+                            shutil.rmtree(entry_path, ignore_errors=True)
+                        elif os.path.isfile(entry_path):
+                            try:
+                                freed_bytes += os.path.getsize(entry_path)
+                            except Exception:
+                                pass
+                            os.remove(entry_path)
+                    except Exception as ex:
+                        logger.warning(f"Error deleting {entry_path}: {ex}")
+            self.session_id = None
+            self.session_dir = None
+            self.frame_counts = {}
+
+        logger.info(f"Cleared SD recordings in {self.storage_root}: {removed_sessions} sessions ({freed_bytes} bytes)")
+        return {
+            "status": "cleared",
+            "sessions_removed": removed_sessions,
+            "freed_mb": round(freed_bytes / (1024 * 1024), 2),
+            "collection": self.get_status()
+        }
 
     def get_status(self):
         # Calculate disk storage stats
@@ -1872,6 +2050,21 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                     self._send_json({"cmd": cmd, "error": str(ex)}, status_code=500)
             else:
                 self._send_json({"error": "No cmd specified"}, status_code=400)
+        elif path in ["/api/sessions/clear", "/api/recordings/clear", "/api/collection/clear"]:
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length > 0:
+                self.rfile.read(content_length)
+            res = self.daemon_ref.collector.clear_all_sessions()
+            self._send_json(res)
+        else:
+            self.send_error(404, "Not Found")
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path in ["/api/sessions", "/api/recordings", "/api/sessions/clear"]:
+            res = self.daemon_ref.collector.clear_all_sessions()
+            self._send_json(res)
         else:
             self.send_error(404, "Not Found")
 
@@ -2019,7 +2212,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
             self.send_error(404, f"Sensor or modality '{target}' not found")
             return
 
-        frame = sensor.get_jpeg_frame()
+        frame = sensor.get_stream_jpeg_frame() if hasattr(sensor, "get_stream_jpeg_frame") else sensor.get_jpeg_frame()
         self.send_response(200)
         self.send_header("Content-Type", "image/jpeg")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -2042,7 +2235,7 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         target_delay = 1.0 / max(sensor.fps, 5)
         try:
             while True:
-                frame_bytes = sensor.get_jpeg_frame()
+                frame_bytes = sensor.get_stream_jpeg_frame() if hasattr(sensor, "get_stream_jpeg_frame") else sensor.get_jpeg_frame()
                 if frame_bytes:
                     self.wfile.write(b"--frame\r\n")
                     self.wfile.write(b"Content-Type: image/jpeg\r\n")

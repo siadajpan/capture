@@ -409,355 +409,74 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
 
 
-  <!-- Fleet Management & Hub Settings Modal -->
-
+  <!-- Recording & Fleet Management Modal -->
   <div class="modal-backdrop" id="modalBackdrop">
-
     <div class="modal-card wide-modal">
-
       <div class="modal-header">
-
         <div class="modal-header-tabs">
-
           <button type="button" class="modal-tab-btn active" id="tabOverviewBtn" data-tab="overview">
-
-            <span>🌐</span>
-
-            <span>Overview & Tunnel</span>
-
+            <span>??</span>
+            <span>Recording</span>
           </button>
-
           <button type="button" class="modal-tab-btn" id="tabFleetBtn" data-tab="fleet">
-
-            <span>💻</span>
-
+            <span>??</span>
             <span>Fleet (<span id="modalFleetBadge">0/0</span>)</span>
-
           </button>
-
-          <button type="button" class="modal-tab-btn" id="tabAddBtn" data-tab="add">
-
-            <span>➕</span>
-
-            <span>Add Device</span>
-
-          </button>
-
-          <button type="button" class="modal-tab-btn" id="tabConfigBtn" data-tab="config">
-
-            <span>⚙️</span>
-
-            <span>Hub Settings</span>
-
-          </button>
-
         </div>
-
         <button class="close-btn" id="closeModalBtn" title="Close modal">&times;</button>
-
       </div>
-
-
 
       <div class="modal-body">
-
-        <!-- TAB 1: OVERVIEW & TUNNEL -->
-
+        <!-- TAB 1: RECORDING -->
         <div class="modal-tab-pane active" id="tabPaneOverview">
-
-          <!-- Cloudflare Tunnel Info Box -->
-
-          <div class="tunnel-highlight-card">
-
-            <div class="tunnel-card-header">
-
-              <div class="tunnel-status-pill">
-
-                <span class="pulse-dot-green"></span>
-
-                <span>CLOUDFLARE TUNNEL</span>
-
-              </div>
-
-              <span class="tunnel-badge-active">ONLINE</span>
-
-            </div>
-
-            
-
-            <div class="tunnel-url-row">
-
-              <div class="tunnel-url-display" id="modalTunnelUrl">https://marvel-reconstruction-atm-planning.trycloudflare.com</div>
-
-              <button type="button" class="copy-btn-tunnel" id="copyTunnelBtn" title="Copy Tunnel URL">
-
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-
-                </svg>
-
-                <span id="copyBtnText">Copy</span>
-
-              </button>
-
-              <a href="https://marvel-reconstruction-atm-planning.trycloudflare.com" target="_blank" rel="noopener" class="open-link-btn" id="openTunnelLink" title="Open in new window">
-
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-
-                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-
-                  <polyline points="15 3 21 3 21 9"></polyline>
-
-                  <line x1="10" y1="14" x2="21" y2="3"></line>
-
-                </svg>
-
-              </a>
-
-            </div>
-
-
-
-            <div class="tunnel-meta-row">
-
-              <span><strong>Local LAN Hub:</strong> <code id="localIpLabel">http://192.168.137.1:8000</code></span>
-
-              <span><strong>Custom Domain:</strong> <code>capture.me.uk</code></span>
-
-            </div>
-
-          </div>
-
-
-
-          <!-- System Stats Grid -->
-
-          <div class="menu-stats-grid">
-
-            <div class="menu-stat-card">
-
-              <span class="stat-num text-accent" id="menuSensorsCount">0</span>
-
-              <span class="stat-sub">Active Sensors</span>
-
-            </div>
-
-            <div class="menu-stat-card">
-
-              <span class="stat-num text-green" id="menuOnlineEdges">0/0</span>
-
-              <span class="stat-sub">Edges Online</span>
-
-            </div>
-
-            <div class="menu-stat-card">
-
-              <span class="stat-num" id="menuFreeStorage">--</span>
-
-              <span class="stat-sub">SD Card Free</span>
-
-            </div>
-
-            <div class="menu-stat-card">
-
-              <span class="stat-num" id="menuRecDuration">00:00:00</span>
-
-              <span class="stat-sub" id="menuRecStatusLabel">Standby</span>
-
-            </div>
-
-          </div>
-
-
-
-          <!-- Synchronized Recording Controls -->
-
-          <div class="menu-rec-section">
-
-            <div class="rec-section-header">
-
-              <h4>🔴 Edge Synchronized Recording</h4>
-
+          <div class="menu-rec-section" style="text-align: center; padding: 36px 24px;">
+            <div class="rec-section-header" style="justify-content: center; gap: 12px; margin-bottom: 10px;">
+              <h4 style="font-size: 1.15rem; margin: 0;">?? Edge Synchronized Recording</h4>
               <span class="badge-tag" id="menuRecBadge">IDLE</span>
-
             </div>
-
-            <p class="rec-section-desc">Starts synchronized local MJPEG / raw frame recording simultaneously across all connected edge nodes to internal SD card storage.</p>
-
-            <div class="rec-controls-bar">
-
-              <input type="text" id="recSessionLabelInput" placeholder="Session label" value="capture.me.uk Session" class="rec-label-input">
-
-              <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn">
-
-                <div class="record-symbol"></div>
-
+            <p class="rec-section-desc" style="max-width: 520px; margin: 0 auto 28px;">
+              Starts synchronized local full-resolution frame and radar recording simultaneously across all connected edge nodes to internal SD card storage.
+            </p>
+            <div class="rec-controls-bar" style="display: flex; justify-content: center; margin: 28px 0;">
+              <button type="button" id="modalCollectBtn" class="modal-action-btn record-action-btn" style="padding: 20px 56px; font-size: 1.25rem; font-weight: 700; min-width: 300px; border-radius: 14px; justify-content: center; align-items: center; gap: 14px; box-shadow: 0 8px 24px rgba(239, 68, 68, 0.25);">
+                <div class="record-symbol" style="width: 18px; height: 18px;"></div>
                 <span id="modalCollectBtnText">Start Recording</span>
-
               </button>
-
             </div>
-
-            <div class="storage-path-box">
-
+            <div class="storage-path-box" style="display: inline-block; margin-top: 8px;">
               <span class="path-title">Internal Edge File Pattern:</span>
-
               <code>&lt;device&gt;/&lt;YYYY-MM-DD&gt;/&lt;HH-MM-SS&gt;/&lt;modality&gt;/frame_*.jpg</code>
-
             </div>
-
           </div>
-
         </div>
 
-
-
-        <!-- TAB 2: FLEET AVAILABILITY -->
-
+        <!-- TAB 2: FLEET AVAILABILITY & TUNNELS -->
         <div class="modal-tab-pane" id="tabPaneFleet">
-
           <div class="fleet-header-summary">
-
             <div class="fleet-stats">
-
               <span class="stat-pill"><strong id="summaryTotalEdges">0</strong> Total Devices</span>
-
               <span class="stat-pill online-pill"><strong id="summaryOnlineEdges">0</strong> Available Online</span>
-
             </div>
-
-            <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices">
-
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-
-              </svg>
-
-              <span>Ping / Refresh</span>
-
-            </button>
-
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button type="button" class="pill-btn-refresh" id="clearAllFleetStorageBtn" onclick="window.clearAllFleetRecordings(event)" title="Delete all recorded sessions across all fleet SD cards" style="border-color: rgba(239, 68, 68, 0.45); color: #fca5a5;">
+                <span>??? Clean All SD Cards</span>
+              </button>
+              <button type="button" class="pill-btn-refresh" id="refreshFleetBtn" title="Ping & Test all devices">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                </svg>
+                <span>Ping / Refresh</span>
+              </button>
+            </div>
           </div>
-
-
 
           <div class="fleet-cards-list" id="fleetCardsContainer">
-
             <!-- Dynamically populated -->
-
           </div>
-
         </div>
-
-
-
-        <!-- TAB 2: ADD NEW DEVICE -->
-
-        <div class="modal-tab-pane" id="tabPaneAdd">
-
-          <div class="phone-connect-box">
-
-            <h4>➕ Register New Edge Device</h4>
-
-            <p>Connect another Raspberry Pi Zero, 4/5, or Linux camera rig to the centralized aggregator:</p>
-
-          </div>
-
-          <form id="addEdgeForm" class="add-edge-form">
-
-            <div class="form-row">
-
-              <div class="form-group flex-2">
-
-                <label>Device Name / Label</label>
-
-                <input type="text" id="edgeNameInput" placeholder="Raspberry Pi Zero (STEVAL-55G0MBI)" required>
-
-              </div>
-
-              <div class="form-group flex-1">
-
-                <label>Device ID</label>
-
-                <input type="text" id="edgeIdInput" placeholder="edge-pi-zero-02" required>
-
-              </div>
-
-            </div>
-
-            <div class="form-row">
-
-              <div class="form-group flex-2">
-
-                <label>IP Address / Hostname / Tailscale</label>
-
-                <input type="text" id="edgeHostInput" placeholder="192.168.137.240" required>
-
-              </div>
-
-              <div class="form-group flex-1">
-
-                <label>Port</label>
-
-                <input type="number" id="edgePortInput" value="5001" required>
-
-              </div>
-
-            </div>
-
-            <button type="submit" class="submit-btn">+ Add Edge Device</button>
-
-          </form>
-
-        </div>
-
-
-
-        <!-- TAB 3: HUB & TUNNEL CONFIG -->
-
-        <div class="modal-tab-pane" id="tabPaneConfig">
-
-          <div class="phone-connect-box">
-
-            <h4>🌐 Edge Hub & Cloudflare Tunnel Endpoint</h4>
-
-            <p>Specify the proxy hub or Cloudflare Tunnel that bridges browser visitors to your edge fleet:</p>
-
-            <div style="display:flex; gap:8px; margin-bottom:8px;">
-
-              <input type="text" id="hubUrlInput" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--border-color); color:#fff; padding:8px; border-radius:6px; font-family:var(--font-mono); font-size:0.85rem;" placeholder="https://marvel-reconstruction-atm-planning.trycloudflare.com">
-
-              <button type="button" class="copy-btn" id="saveHubUrlBtn">Save</button>
-
-            </div>
-
-            <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
-
-              <button type="button" class="pill active" id="btnPresetDefault" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;">☁️ Reset to Server Default (config.json)</button>
-
-              <button type="button" class="pill" id="btnPresetLocal" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://127.0.0.1:8000')">💻 Local PC Hub (8000)</button>
-
-              <button type="button" class="pill" id="btnPresetDirectPi" style="font-size:0.75rem; padding:4px 8px; cursor:pointer;" onclick="window.setQuickHub('http://192.168.137.240:5001')">🍓 Direct Pi (5001)</button>
-
-            </div>
-
-            <small style="color:var(--text-muted); font-size:0.75rem;">Visitors to <code>capture.me.uk</code> automatically load the default endpoint from <code>/config.json</code>.</small>
-
-          </div>
-
-        </div>
-
       </div>
-
     </div>
-
   </div>
-
-
 
   <!-- Client-Side Dashboard Script -->
 
@@ -4780,266 +4499,245 @@ async function startPrebuffering() {
 
 
       function renderFleetCards() {
-
         if (!el.fleetCardsContainer) return;
 
-
-
         const total = state.edges.length;
-
         const online = state.edges.filter(e => e.online).length;
 
-
-
         if (el.modalFleetBadge) el.modalFleetBadge.textContent = `${online}/${total}`;
-
         if (el.summaryTotalEdges) el.summaryTotalEdges.textContent = total;
-
         if (el.summaryOnlineEdges) el.summaryOnlineEdges.textContent = online;
 
-
-
         if (state.edges.length === 0) {
-
           el.fleetCardsContainer.innerHTML = `
-
             <div class="empty-state" style="padding: 24px;">
-
-              <p>No edge devices registered in fleet yet.</p>
-
-              <button class="submit-btn" style="margin-top: 10px;" onclick="window.switchModalTab('add')">+ Register First Device</button>
-
+              <p>Discovering edge devices via Cloudflare Tunnels...</p>
             </div>
-
           `;
-
           return;
-
         }
 
-
+        const defaultTunnelMap = {
+          'edge-pi-zero-01': 'https://fleet1.capture.me.uk',
+          'edge-pi-zero-02': 'https://fleet2.capture.me.uk',
+          'edge-pi-zero-03': 'https://fleet3.capture.me.uk'
+        };
 
         el.fleetCardsContainer.innerHTML = state.edges.map(edge => {
-
           const hotspotSSID = edge.hotspot_ssid || (
-
             edge.device_id === 'edge-pi-zero-01' ? 'CaptureFleet2' :
-
             edge.device_id === 'edge-pi-zero-03' ? 'CaptureFleet1' :
-
             edge.device_id === 'edge-pi-zero-02' ? 'CaptureFleet3' :
-
             'CaptureFleet'
-
           );
-
           const isOnline = Boolean(edge.online);
-
+          const tunnelUrl = edge.tunnel_url || defaultTunnelMap[edge.device_id] || hubBaseUrl;
           const net = edge.network || {};
-
           let netLabel = edge.host ? `${edge.host}:${edge.port}` : 'Default';
-
-          let netIcon = '🌐';
-
+          let netIcon = '??';
           if (net.type === 'hotspot') {
-
-            netIcon = '📱';
-
-            netLabel = `Hotspot (${escapeHtml(net.ssid || 'Wi-Fi')}) • ${escapeHtml(net.ip || edge.host)}`;
-
+            netIcon = '??';
+            netLabel = `Hotspot (${escapeHtml(net.ssid || 'Wi-Fi')}) ? ${escapeHtml(net.ip || edge.host)}`;
           } else if (net.type === '5g') {
-
-            netIcon = '📶';
-
-            netLabel = `5G Cellular (${escapeHtml(net.interface || 'wwan0')}) • ${escapeHtml(net.ip || edge.host)}`;
-
+            netIcon = '??';
+            netLabel = `4G/5G Cellular (${escapeHtml(net.interface || 'usb0')}) ? ${escapeHtml(net.ip || edge.host)}`;
           } else if (net.type === 'ethernet') {
-
-            netIcon = '🔌';
-
+            netIcon = '??';
             netLabel = `Ethernet (${escapeHtml(net.ip || edge.host)})`;
-
           }
 
-
-
           const sensors = edge.sensors || [];
-
-          const sensorDesc = sensors.length > 0 
-
+          const sensorDesc = sensors.length > 0
             ? sensors.map(s => `${escapeHtml(s.name || s.id)} (${s.resolution || '640x600'} @ ${s.fps || 15}fps)`).join(', ')
-
             : 'No sensors detected';
 
-
-
           const col = edge.collection || {};
-
-          const storageDesc = col.disk_free_gb !== undefined 
-
-            ? `${col.disk_free_gb} GB free of ${col.disk_total_gb || '--'} GB`
-
+          const storageDesc = col.disk_free_gb !== undefined
+            ? `${col.disk_free_gb} GB free of ${col.disk_total_gb || '--'} GB (${col.disk_used_percent || 0}% used)`
             : 'SD Card storage ready';
 
-
-
           const isGateway = Boolean(edge.is_gateway);
-
           const has4G = Boolean(isGateway || (edge.network && (edge.network.type === '5g' || edge.network.type === '4g' || (edge.network.interface && edge.network.interface.startsWith('usb')))));
-
           const pingVal = edge.ping_ms;
-
-          const pingLabel = isGateway ? '0ms (Gateway)' : (pingVal !== undefined ? `${pingVal}ms ping` : 'Active');
-
-          const lastSeenStr = edge.last_seen 
-
-            ? timeAgo(edge.last_seen)
-
-            : 'Never';
-
-          const linkBadgeText = isOnline 
-
-            ? (isGateway ? `📶 4G GATEWAY` : (has4G ? `📶 4G CELLULAR (${pingLabel})` : `🟢 ${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`))
-
-            : `⚪ OFFLINE (${lastSeenStr})`;
-
-
+          const pingLabel = isGateway ? 'Direct Tunnel' : (pingVal !== undefined ? `${pingVal}ms ping` : 'Active');
+          const lastSeenStr = edge.last_seen ? timeAgo(edge.last_seen) : 'Never';
+          const linkBadgeText = isOnline
+            ? (isGateway ? `?? 4G TUNNEL ONLINE` : (has4G ? `?? 4G CELLULAR (${pingLabel})` : `?? ${edge.link_status ? edge.link_status.toUpperCase() : 'ONLINE'} (${pingLabel})`))
+            : `? OFFLINE (${lastSeenStr})`;
 
           return `
-
             <div class="fleet-device-card ${isOnline ? 'online' : 'offline'}">
-
               <div class="fleet-card-top">
-
                 <div class="fleet-device-title-group">
-
                   <span class="fleet-device-name">
-
                     <span class="status-indicator ${isOnline ? '' : 'offline'}"></span>
-
                     ${escapeHtml(edge.device_name || edge.device_id)}
-
                   </span>
-
-                  <span class="fleet-device-id">ID: <code>${escapeHtml(edge.device_id)}</code> &bull; Host: <code>${escapeHtml(edge.host)}:${edge.port}</code></span>
-
+                  <span class="fleet-device-id">ID: <code>${escapeHtml(edge.device_id)}</code> &bull; Local: <code>${escapeHtml( net.ip || edge.host || '0.0.0.0' )}:${edge.port || 5001}</code></span>
                 </div>
-
                 <div class="fleet-status-badge ${isOnline ? 'online' : 'offline'}">
-
                   ${linkBadgeText}
-
                 </div>
-
               </div>
 
-
+              <!-- Per-Device Cloudflare Tunnel Row -->
+              <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; background:rgba(14, 165, 233, 0.08); border:1px solid rgba(14, 165, 233, 0.25); border-radius:8px; padding:8px 12px; margin:8px 0;">
+                <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                  <span style="font-size:0.72rem; font-weight:700; color:var(--accent-cyan); text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap;">?? Tunnel:</span>
+                  <code style="font-size:0.82rem; color:#e2e8f0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(tunnelUrl)}</code>
+                </div>
+                <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                  <button type="button" class="copy-btn-tunnel" style="padding:4px 10px; font-size:0.75rem;" onclick="navigator.clipboard && navigator.clipboard.writeText('${escapeHtml(tunnelUrl)}'); this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy', 1500);">Copy</button>
+                  <a href="${escapeHtml(tunnelUrl)}/api/status" target="_blank" rel="noopener" class="open-link-btn" style="padding:4px 8px; font-size:0.75rem; text-decoration:none;" title="Open Device Tunnel Status">?</a>
+                </div>
+              </div>
 
               <div class="fleet-details-grid">
-
                 <div class="fleet-detail-item">
-
                   <span>${netIcon}</span>
-
                   <span><strong>Connection:</strong> ${netLabel}</span>
-
                 </div>
-
                 <div class="fleet-detail-item">
-
-                  <span>📷</span>
-
+                  <span>??</span>
                   <span><strong>Sensors:</strong> ${sensorDesc}</span>
-
                 </div>
-
                 <div class="fleet-detail-item">
-
-                  <span>💾</span>
-
-                  <span><strong>Storage:</strong> ${storageDesc}</span>
-
+                  <span>??</span>
+                  <span><strong>SD Storage:</strong> ${storageDesc}</span>
                 </div>
-
                 <div class="fleet-detail-item">
-
-                  <span>⏱️</span>
-
+                  <span>??</span>
                   <span><strong>Status:</strong> ${isOnline ? (col.is_recording ? `Recording (#${col.duration_seconds || 0}s)` : 'Standby / Ready') : 'Unreachable'}</span>
-
                 </div>
-
               </div>
-
-
 
               <div class="fleet-hotspot-control">
-
                 <div class="hotspot-status-label">
-
-                  <span>📡 Wi-Fi Hotspot:</span>
-
+                  <span>?? Wi-Fi Hotspot:</span>
                   <span class="hotspot-badge ${edge.hotspot_enabled !== false ? 'active' : 'disabled'}">
-
-                    ${edge.hotspot_enabled !== false ? `🟢 ${hotspotSSID} (Active)` : `⚪ ${hotspotSSID} (Disabled)`}
-
+                    ${edge.hotspot_enabled !== false ? `?? ${hotspotSSID} (Active)` : `? ${hotspotSSID} (Disabled)`}
                   </span>
-
                 </div>
-
-                <button 
-
-                  class="btn-hotspot-toggle ${edge.hotspot_enabled !== false ? 'btn-hotspot-off' : 'btn-hotspot-on'}" 
-
+                <button
+                  class="btn-hotspot-toggle ${edge.hotspot_enabled !== false ? 'btn-hotspot-off' : 'btn-hotspot-on'}"
                   onclick="window.toggleEdgeHotspot('${edge.device_id}', ${edge.hotspot_enabled === false}, event)"
-
                   title="${edge.hotspot_enabled !== false ? `Turn off ${hotspotSSID} to save battery` : `Turn on ${hotspotSSID}`}">
-
-                  ${edge.hotspot_enabled !== false ? `⚡ Turn OFF ${hotspotSSID}` : `📡 Turn ON ${hotspotSSID}`}
-
+                  ${edge.hotspot_enabled !== false ? `? Turn OFF ${hotspotSSID}` : `?? Turn ON ${hotspotSSID}`}
                 </button>
-
               </div>
 
-
-
-              <div class="fleet-card-actions">
-
+              <div class="fleet-card-actions" style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px;">
                 ${isOnline ? `
-
                   <button class="btn-action-view" onclick="window.focusDeviceFeed('${edge.device_id}')">
-
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-
                       <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-
                       <circle cx="12" cy="12" r="3"></circle>
-
                     </svg>
-
                     View Feed
-
                   </button>
-
-                ` : ''}
-
-                <button class="btn-action-remove" onclick="window.removeEdgeDevice('${edge.device_id}')">
-
-                  Remove Device
-
+                ` : '<span></span>'}
+                <button
+                  type="button"
+                  class="btn-action-remove"
+                  onclick="window.clearEdgeRecordings('${edge.device_id}', event)"
+                  title="Delete all recorded sessions from this device's SD card">
+                  ??? Clean SD Drive (Remove Recordings)
                 </button>
-
               </div>
-
             </div>
-
           `;
-
         }).join('');
-
       }
 
+      window.clearEdgeRecordings = async function(deviceId, ev) {
+        const edge = state.edges.find(e => e.device_id === deviceId);
+        const defaultTunnelMap = {
+          'edge-pi-zero-01': 'https://fleet1.capture.me.uk',
+          'edge-pi-zero-02': 'https://fleet2.capture.me.uk',
+          'edge-pi-zero-03': 'https://fleet3.capture.me.uk'
+        };
+        const targetUrl = (edge && edge.tunnel_url) ? edge.tunnel_url : (defaultTunnelMap[deviceId] || hubBaseUrl);
+        const devLabel = (edge && edge.device_name) ? edge.device_name : deviceId;
+        if (!confirm(`Delete all recorded sessions from SD card on "${devLabel}" (${targetUrl})?`)) return;
 
+        const btn = ev && ev.currentTarget ? ev.currentTarget : null;
+        const origText = btn ? btn.textContent : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '? Cleaning SD...';
+        }
+        try {
+          const res = await fetch(`${targetUrl}/api/sessions/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}'
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          if (btn) {
+            btn.textContent = `? Removed ${data.sessions_removed || 0} sessions (${data.freed_mb || 0} MB)`;
+          }
+          await pollData();
+          if (state.viewMode === 'playback') {
+            await loadPlaybackSessions(true);
+          } else {
+            state.playbackSessions = [];
+          }
+        } catch (err) {
+          alert(`Failed to clean SD card on ${devLabel}: ` + err.message);
+        } finally {
+          setTimeout(() => {
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = origText || '??? Clean SD Drive (Remove Recordings)';
+            }
+          }, 2500);
+        }
+      };
+
+      window.clearAllFleetRecordings = async function(ev) {
+        if (!confirm('Delete ALL recorded sessions across ALL 3 devices in the fleet?')) return;
+        const btn = ev && ev.currentTarget ? ev.currentTarget : document.getElementById('clearAllFleetStorageBtn');
+        const origHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+          btn.disabled = true;
+          btn.innerHTML = '<span>? Cleaning All SD Cards...</span>';
+        }
+        const urls = ['https://fleet1.capture.me.uk', 'https://fleet2.capture.me.uk', 'https://fleet3.capture.me.uk'];
+        state.edges.forEach(e => {
+          if (e.tunnel_url && !urls.includes(e.tunnel_url)) urls.push(e.tunnel_url);
+        });
+        let totalRemoved = 0;
+        let totalFreedMb = 0;
+        await Promise.allSettled(urls.map(async u => {
+          try {
+            const res = await fetch(`${u}/api/sessions/clear`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: '{}'
+            });
+            if (res.ok) {
+              const d = await res.json();
+              totalRemoved += (d.sessions_removed || 0);
+              totalFreedMb += (d.freed_mb || 0);
+            }
+          } catch (_) {}
+        }));
+        if (btn) {
+          btn.innerHTML = `<span>? Cleaned (${totalRemoved} sessions, ${totalFreedMb.toFixed(1)} MB)</span>`;
+        }
+        await pollData();
+        state.playbackSessions = [];
+        if (state.viewMode === 'playback') {
+          await loadPlaybackSessions(true);
+        }
+        setTimeout(() => {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origHtml || '<span>??? Clean All SD Cards</span>';
+          }
+        }, 3000);
+      };
 
       async function handleAddEdge(e) {
 
