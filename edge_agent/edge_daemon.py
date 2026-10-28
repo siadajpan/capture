@@ -1024,10 +1024,11 @@ class SensorDriver:
         if hasattr(self, "record_width") and (self.record_width != self.stream_width or self.record_height != self.stream_height):
             new_w = self.record_width if is_rec else self.stream_width
             new_h = self.record_height if is_rec else self.stream_height
-            logger.info(f"[{self.sensor_id}] Switching mode to {'RECORDING (Full 8MP ' + str(new_w) + 'x' + str(new_h) + ')' if is_rec else 'STREAMING (640x480)'}")
+            logger.info(f"[{self.sensor_id}] Mode switch: {'RECORDING (Full 8MP ' + str(new_w) + 'x' + str(new_h) + ')' if is_rec else 'STREAMING (640x480)'}")
             self.width = new_w
             self.height = new_h
             if self.backend == "rpicam_pipe" and getattr(self, "rpicam_proc", None):
+                self.latest_jpeg = None
                 try:
                     self.rpicam_proc.terminate()
                     self.rpicam_proc.wait(timeout=1.0)
@@ -1035,6 +1036,11 @@ class SensorDriver:
                     pass
                 self.rpicam_proc = None
                 time.sleep(0.3)
+                # Await first valid frame of new mode
+                for _ in range(25):
+                    if getattr(self, "latest_jpeg", None):
+                        break
+                    time.sleep(0.1)
 
     def _read_exact(self, pipe, size, timeout=2.5):
         import select
@@ -1250,16 +1256,19 @@ class SensorDriver:
 
     def _spawn_rpicam_proc(self):
         rpicam_bin = getattr(self, "_rpicam_bin", "/usr/bin/rpicam-vid")
+        is_full_res = (self.width >= 3000 or self.height >= 2000)
+        fps = 10 if is_full_res else self.fps
+        quality = "65" if is_full_res else "75"
         # Native libcamera MJPEG hardware/ISP streaming with true ISP color calibration (AWB, CCM, lens shading)
         cmd = [
             rpicam_bin,
             "-t", "0",
             "--inline",
             "--codec", "mjpeg",
-            "-q", "75",
+            "-q", quality,
             "--width", str(self.width),
             "--height", str(self.height),
-            "--framerate", str(self.fps),
+            "--framerate", str(fps),
             "-n",
             "-o", "-"
         ]
