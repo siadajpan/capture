@@ -539,15 +539,13 @@ Starts synchronized local full-resolution frame and radar recording simultaneous
 
 
         if (el.openMenuBtn) {
-
           el.openMenuBtn.addEventListener('click', () => {
-
             window.switchModalTab('overview');
-
             el.modalBackdrop.classList.add('open');
-
+            renderFleetCards();
+            updateHUD();
+            pollData();
           });
-
         }
 
 
@@ -641,31 +639,42 @@ Starts synchronized local full-resolution frame and radar recording simultaneous
 
 
         if (el.refreshFleetBtn) {
-
           el.refreshFleetBtn.addEventListener('click', async () => {
-
-            el.refreshFleetBtn.textContent = 'Pinging...';
-
-            await pollData();
-
-            setTimeout(() => {
-
+            el.refreshFleetBtn.disabled = true;
+            el.refreshFleetBtn.innerHTML = `
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin">
+                <circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-linecap="round"></circle>
+              </svg>
+              <span>Refreshing Storage...</span>
+            `;
+            try {
+              await pollData();
+              renderFleetCards();
+              updateHUD();
               el.refreshFleetBtn.innerHTML = `
-
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-
-                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
-
+                  <polyline points="20 6 9 17 4 12"></polyline>
                 </svg>
-
-                <span>Ping / Refresh</span>
-
+                <span>Storage Updated!</span>
               `;
-
-            }, 600);
-
+            } catch (err) {
+              console.warn('Refresh notice:', err);
+              renderFleetCards();
+              updateHUD();
+              el.refreshFleetBtn.innerHTML = `<span>⚠️ Updated (Jitter)</span>`;
+            }
+            setTimeout(() => {
+              if (el.refreshFleetBtn) {
+                el.refreshFleetBtn.disabled = false;
+                el.refreshFleetBtn.innerHTML = `
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                  </svg>
+                  <span>Ping / Refresh</span>
+                `;
+              }
+            }, 1000);
           });
-
         }
 
 
@@ -1028,7 +1037,11 @@ Starts synchronized local full-resolution frame and radar recording simultaneous
 
                 // Try /api/status first (native fast response on all edge nodes)
 
-                const res = await fetch(`${node.url}/api/status`, { signal: controller.signal });
+                const res = await fetch(`${node.url}/api/status?_t=${Date.now()}`, {
+                  cache: 'no-store',
+                  headers: { 'Cache-Control': 'no-cache, no-store' },
+                  signal: controller.signal
+                });
 
                 clearTimeout(timeoutId);
 
@@ -1078,7 +1091,11 @@ Starts synchronized local full-resolution frame and radar recording simultaneous
 
                 const t2 = setTimeout(() => c2.abort(), 2500);
 
-                const res2 = await fetch(`${node.url}/api/edges`, { signal: c2.signal });
+                const res2 = await fetch(`${node.url}/api/edges?_t=${Date.now()}`, {
+                  cache: 'no-store',
+                  headers: { 'Cache-Control': 'no-cache, no-store' },
+                  signal: c2.signal
+                });
 
                 clearTimeout(t2);
 
@@ -1135,25 +1152,18 @@ Starts synchronized local full-resolution frame and radar recording simultaneous
                 }
 
                 const existing = mergedEdges.get(edge.device_id);
-
                 if (!existing) {
-
                   mergedEdges.set(edge.device_id, edge);
-
                 } else {
-
-                  if (!existing.tunnel_url && edge.tunnel_url) {
-
-                    mergedEdges.set(edge.device_id, edge);
-
-                  } else if (edge.online && !existing.online) {
-
-                    mergedEdges.set(edge.device_id, edge);
-
-                  }
-
+                  mergedEdges.set(edge.device_id, {
+                    ...existing,
+                    ...edge,
+                    tunnel_url: edge.tunnel_url || existing.tunnel_url,
+                    collection: edge.collection || existing.collection,
+                    online: edge.online !== undefined ? edge.online : existing.online,
+                    last_seen: Date.now() / 1000
+                  });
                 }
-
               });
 
             }
@@ -4225,28 +4235,44 @@ async function startPrebuffering() {
           btn.disabled = true;
           btn.innerHTML = '<span>Cleaning All SD Cards...</span>';
         }
-        const urls = ['https://fleet1.capture.me.uk', 'https://fleet2.capture.me.uk', 'https://fleet3.capture.me.uk'];
+        const devices = [
+          { name: 'Pi #1', url: 'https://fleet1.capture.me.uk' },
+          { name: 'Pi #2', url: 'https://fleet2.capture.me.uk' },
+          { name: 'Pi #3', url: 'https://fleet3.capture.me.uk' }
+        ];
         state.edges.forEach(e => {
-          if (e.tunnel_url && !urls.includes(e.tunnel_url)) urls.push(e.tunnel_url);
+          if (e.tunnel_url && !devices.some(d => d.url === e.tunnel_url)) {
+            devices.push({ name: e.device_name || e.device_id, url: e.tunnel_url });
+          }
         });
-        let totalRemoved = 0;
-        let totalFreedMb = 0;
-        await Promise.allSettled(urls.map(async u => {
+
+        const statusReports = [];
+        await Promise.allSettled(devices.map(async d => {
           try {
-            const res = await fetch(`${u}/api/sessions/clear`, {
+            const ctrl = new AbortController();
+            const tid = setTimeout(() => ctrl.abort(), 60000);
+            const res = await fetch(`${d.url}/api/sessions/clear`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: '{}'
+              body: '{}',
+              signal: ctrl.signal
             });
+            clearTimeout(tid);
             if (res.ok) {
-              const d = await res.json();
-              totalRemoved += (d.sessions_removed || 0);
-              totalFreedMb += (d.freed_mb || 0);
+              const data = await res.json();
+              statusReports.push(`✅ ${d.name}: Cleaned (${data.sessions_removed || 0} sessions, ${(data.freed_mb || 0).toFixed(1)} MB freed)`);
+            } else {
+              statusReports.push(`❌ ${d.name}: Error HTTP ${res.status}`);
             }
-          } catch (_) {}
+          } catch (err) {
+            statusReports.push(`⚠️ ${d.name}: Offline / Unreachable`);
+          }
         }));
+
+        alert('SD Card Cleaning Status:\n\n' + statusReports.join('\n'));
+
         if (btn) {
-          btn.innerHTML = `<span>Cleaned (${totalRemoved} sessions, ${totalFreedMb.toFixed(1)} MB)</span>`;
+          btn.innerHTML = '<span>Clean Finished</span>';
         }
         await pollData();
         state.playbackSessions = [];
@@ -4256,7 +4282,7 @@ async function startPrebuffering() {
         setTimeout(() => {
           if (btn) {
             btn.disabled = false;
-            btn.innerHTML = origHtml || '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg> <span>Clean All SD Cards</span>';
+            btn.innerHTML = origHtml;
           }
         }, 3000);
       };

@@ -1904,20 +1904,35 @@ class CollectionManager:
                 if not folder:
                     continue
 
-                frame_bytes = sensor.get_jpeg_frame()
-                if frame_bytes:
-                    now_ts = round(time.time(), 4)
-                    cnt = self.frame_counts.get(sensor.sensor_id, 0) + 1
-                    self.frame_counts[sensor.sensor_id] = cnt
-                    if hasattr(self, "frame_timestamps") and sensor.sensor_id in self.frame_timestamps:
-                        self.frame_timestamps[sensor.sensor_id].append(now_ts)
-                    filename = f"frame_{cnt:06d}.jpg"
-                    file_path = os.path.join(folder, filename)
-                    try:
-                        with open(file_path, "wb") as f:
-                            f.write(frame_bytes)
-                    except Exception as e:
-                        logger.error(f"Failed to write frame to {file_path}: {e}")
+                is_radar = (sensor.modality == "radar" or getattr(sensor, "backend", "") == "radar")
+                now_ts = round(time.time(), 4)
+                cnt = self.frame_counts.get(sensor.sensor_id, 0) + 1
+                self.frame_counts[sensor.sensor_id] = cnt
+                if hasattr(self, "frame_timestamps") and sensor.sensor_id in self.frame_timestamps:
+                    self.frame_timestamps[sensor.sensor_id].append(now_ts)
+
+                if is_radar:
+                    # For radar: write individual raw binary frame file
+                    raw_ts, raw_pkt = sensor.get_latest_raw_packet()
+                    if raw_pkt:
+                        bin_filename = f"frame_{cnt:06d}.bin"
+                        bin_path = os.path.join(folder, bin_filename)
+                        try:
+                            with open(bin_path, "wb") as bf:
+                                bf.write(raw_pkt)
+                        except Exception as be:
+                            logger.error(f"Failed to write radar frame to {bin_path}: {be}")
+                else:
+                    # For cameras: write image frame
+                    frame_bytes = sensor.get_jpeg_frame()
+                    if frame_bytes:
+                        filename = f"frame_{cnt:06d}.jpg"
+                        file_path = os.path.join(folder, filename)
+                        try:
+                            with open(file_path, "wb") as f:
+                                f.write(frame_bytes)
+                        except Exception as e:
+                            logger.error(f"Failed to write frame to {file_path}: {e}")
 
                 # Save raw radar packet bitstream & full spectrum JSONL using persistent file handles
                 if hasattr(sensor, "get_spectrum_data") and (sensor.modality == "radar" or getattr(sensor, "backend", "") == "radar"):
@@ -1956,6 +1971,18 @@ class CollectionManager:
                         except Exception:
                             pass
 
+            # Safety check: Ensure at least 100 MB free disk space remains
+            if os.name != "nt":
+                try:
+                    vfs = os.statvfs(self.storage_root)
+                    free_mb = (vfs.f_bavail * vfs.f_frsize) / (1024 * 1024)
+                    if free_mb < 100.0:
+                        logger.warning(f"[storage] Disk space low: only {free_mb:.1f} MB free (minimum safety margin: 100 MB). Auto-stopping collection...")
+                        threading.Thread(target=self.stop_collection, daemon=True).start()
+                        break
+                except Exception as de:
+                    logger.debug(f"Error checking disk free space: {de}")
+
             if getattr(self, "max_duration_seconds", None) and (time.time() - self.session_start_time) >= self.max_duration_seconds:
                 logger.info(f"Session {self.session_id} reached duration limit of {self.max_duration_seconds}s. Auto-stopping...")
                 threading.Thread(target=self.stop_collection, daemon=True).start()
@@ -1976,27 +2003,19 @@ class CollectionManager:
                 pass
 
         removed_sessions = 0
-        freed_bytes = 0
         with self.lock:
             if os.path.exists(self.storage_root):
                 for entry in os.listdir(self.storage_root):
                     entry_path = os.path.join(self.storage_root, entry)
                     try:
                         if os.path.isdir(entry_path):
-                            for root, dirs, files in os.walk(entry_path):
-                                if "session_manifest.json" in files:
-                                    removed_sessions += 1
-                                for fn in files:
-                                    try:
-                                        freed_bytes += os.path.getsize(os.path.join(root, fn))
-                                    except Exception:
-                                        pass
-                            shutil.rmtree(entry_path, ignore_errors=True)
+                            removed_sessions += 1
+                            # Fast OS-level deletion without freezing Python thread on stat calls
+                            if os.name != "nt":
+                                subprocess.run(f"rm -rf '{entry_path}'", shell=True)
+                            else:
+                                shutil.rmtree(entry_path, ignore_errors=True)
                         elif os.path.isfile(entry_path):
-                            try:
-                                freed_bytes += os.path.getsize(entry_path)
-                            except Exception:
-                                pass
                             os.remove(entry_path)
                     except Exception as ex:
                         logger.warning(f"Error deleting {entry_path}: {ex}")
@@ -2004,11 +2023,10 @@ class CollectionManager:
             self.session_dir = None
             self.frame_counts = {}
 
-        logger.info(f"Cleared SD recordings in {self.storage_root}: {removed_sessions} sessions ({freed_bytes} bytes)")
+        logger.info(f"Cleared SD recordings in {self.storage_root}: {removed_sessions} sessions")
         return {
             "status": "cleared",
             "sessions_removed": removed_sessions,
-            "freed_mb": round(freed_bytes / (1024 * 1024), 2),
             "collection": self.get_status()
         }
 
