@@ -572,7 +572,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         } else {
 
-          defaultHub = clientConfig?.default_hub_url || 'https://fleet.capture.me.uk';
+          defaultHub = clientConfig?.default_hub_url || 'https://fleet1.capture.me.uk';
 
         }
 
@@ -580,7 +580,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         let savedHub = localStorage.getItem('capture_hub_url');
 
-        if (savedHub && (savedHub.includes('192.168.41.78') || savedHub.includes('192.168.1.100') || savedHub.includes('192.168.1.150') || savedHub.includes('lynn-oak'))) {
+        if (savedHub && (savedHub.includes('192.168.41.78') || savedHub.includes('192.168.1.100') || savedHub.includes('192.168.1.150') || savedHub.includes('lynn-oak') || savedHub.includes('fleet.capture.me.uk'))) {
 
           savedHub = null;
 
@@ -886,7 +886,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
         } catch (e) {
 
-          const fallbackTunnel = clientConfig?.default_hub_url || 'https://fleet.capture.me.uk';
+          const fallbackTunnel = clientConfig?.default_hub_url || 'https://fleet1.capture.me.uk';
 
           if (el.modalTunnelUrl) el.modalTunnelUrl.textContent = fallbackTunnel;
 
@@ -1512,8 +1512,6 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 // Try /api/status first (native fast response on all edge nodes)
 
                 const res = await fetch(`${node.url}/api/status?_t=${Date.now()}`, {
-                  cache: 'no-store',
-                  headers: { 'Cache-Control': 'no-cache, no-store' },
                   signal: controller.signal
                 });
 
@@ -1566,8 +1564,6 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
                 const t2 = setTimeout(() => c2.abort(), 2500);
 
                 const res2 = await fetch(`${node.url}/api/edges?_t=${Date.now()}`, {
-                  cache: 'no-store',
-                  headers: { 'Cache-Control': 'no-cache, no-store' },
                   signal: c2.signal
                 });
 
@@ -1716,7 +1712,7 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
 
           if ((!state.edges || state.edges.length === 0) && state.pollFailCount >= 2) {
 
-            const defaultUrl = clientConfig?.default_hub_url || 'https://fleet.capture.me.uk';
+            const defaultUrl = clientConfig?.default_hub_url || 'https://fleet1.capture.me.uk';
 
             el.feedsViewport.innerHTML = `
 

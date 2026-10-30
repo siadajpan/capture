@@ -1231,6 +1231,9 @@ class SensorDriver:
                 except Exception as ex:
                     logger.warning(f"Could not set v4l2 format: {ex}")
 
+                # Ensure Auto Exposure is enabled with anti-saturation neutral bias
+                self.apply_exposure_controls(auto_exposure=0, auto_exposure_bias=6)
+
                 # Query the actual format accepted by the driver
                 actual_w = self.width
                 actual_h = self.height
@@ -1462,6 +1465,7 @@ class SensorDriver:
                         )
                     except Exception:
                         pass
+                    self.apply_exposure_controls(auto_exposure=0, auto_exposure_bias=6)
                     self.v4l2_proc = subprocess.Popen(
                         ["v4l2-ctl", "-d", self.device_node, "--stream-mmap", "--stream-to=-"],
                         stdout=subprocess.PIPE,
@@ -1618,6 +1622,60 @@ class SensorDriver:
         except Exception as e:
             logger.warning(f"Preview stamp error: {e}")
             return raw_full
+
+    def apply_exposure_controls(self, auto_exposure=0, auto_exposure_bias=6, exposure=None):
+        """Applies auto or manual exposure controls to V4L2 device nodes and subdevices."""
+        ctrls = []
+        if auto_exposure is not None:
+            ctrls.append(f"auto_exposure={int(auto_exposure)}")
+        if auto_exposure_bias is not None:
+            ctrls.append(f"auto_exposure_bias={int(auto_exposure_bias)}")
+        if exposure is not None:
+            ctrls.append(f"exposure={int(exposure)}")
+        if not ctrls or os.name == "nt":
+            return False
+        ctrl_str = ",".join(ctrls)
+        applied = False
+        candidates = [getattr(self, "device_node", "/dev/video0"), "/dev/v4l-subdev0", "/dev/v4l-subdev1"]
+        for dev in candidates:
+            if dev and os.path.exists(dev):
+                try:
+                    res = subprocess.run(
+                        ["v4l2-ctl", "-d", dev, "-c", ctrl_str],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.5
+                    )
+                    if res.returncode == 0:
+                        applied = True
+                except Exception:
+                    pass
+        return applied
+
+    def query_exposure_controls(self):
+        """Queries current exposure and auto exposure status from V4L2 device nodes or subdevices."""
+        if os.name == "nt":
+            return {"auto_exposure": 0, "auto_exposure_bias": 6, "exposure": 200}
+        candidates = [getattr(self, "device_node", "/dev/video0"), "/dev/v4l-subdev0", "/dev/v4l-subdev1"]
+        for dev in candidates:
+            if dev and os.path.exists(dev):
+                try:
+                    res = subprocess.run(
+                        ["v4l2-ctl", "-d", dev, "-C", "auto_exposure,auto_exposure_bias,exposure,analogue_gain,digital_gain"],
+                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=1.5
+                    )
+                    if res.returncode == 0 and res.stdout:
+                        out = {}
+                        for line in res.stdout.splitlines():
+                            if ":" in line:
+                                k, v = line.split(":", 1)
+                                try:
+                                    out[k.strip()] = int(v.strip().split()[0])
+                                except Exception:
+                                    out[k.strip()] = v.strip()
+                        if out:
+                            return out
+                except Exception:
+                    pass
+        return {}
 
     def release(self):
         if self.backend == "radar" and getattr(self, "radar_driver", None):
@@ -2131,6 +2189,14 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                     kwargs={"is_recording_state": False},
                     daemon=True
                 ).start()
+        elif path == "/api/camera/exposure":
+            for s in self.daemon_ref.sensors:
+                if hasattr(s, "query_exposure_controls"):
+                    info = s.query_exposure_controls()
+                    if info:
+                        self._send_json({"device_id": self.daemon_ref.config.get("device_id"), "controls": info})
+                        return
+            self._send_json({"error": "No V4L2 camera found"}, status_code=404)
         elif path == "/api/sessions" or path == "/api/recordings/sessions":
             self._handle_list_sessions()
         elif path.startswith("/api/session/"):
@@ -2138,11 +2204,17 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404, "Not Found")
 
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.end_headers()
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Cache-Control, Pragma, X-Requested-With, Origin, Accept")
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
@@ -2254,6 +2326,31 @@ class EdgeHttpHandler(BaseHTTPRequestHandler):
                     self._send_json({"cmd": cmd, "error": str(ex)}, status_code=500)
             else:
                 self._send_json({"error": "No cmd specified"}, status_code=400)
+        elif path == "/api/camera/exposure":
+            content_length = int(self.headers.get('Content-Length', 0))
+            payload = {}
+            if content_length > 0:
+                body = self.rfile.read(content_length)
+                try:
+                    payload = json.loads(body.decode('utf-8'))
+                except Exception:
+                    pass
+            qs = parse_qs(parsed.query)
+            auto_exp = payload.get("auto_exposure", qs.get("auto_exposure", [None])[0])
+            bias = payload.get("auto_exposure_bias", qs.get("auto_exposure_bias", [None])[0])
+            exp = payload.get("exposure", qs.get("exposure", [None])[0])
+            applied = False
+            for s in self.daemon_ref.sensors:
+                if hasattr(s, "apply_exposure_controls"):
+                    if s.apply_exposure_controls(auto_exposure=auto_exp, auto_exposure_bias=bias, exposure=exp):
+                        applied = True
+            current = {}
+            for s in self.daemon_ref.sensors:
+                if hasattr(s, "query_exposure_controls"):
+                    current = s.query_exposure_controls()
+                    if current:
+                        break
+            self._send_json({"success": applied, "controls": current})
         elif path in ["/api/sessions/clear", "/api/recordings/clear", "/api/collection/clear"]:
             content_length = int(self.headers.get('Content-Length', 0))
             if content_length > 0:
