@@ -505,7 +505,8 @@ const description = "Cloudflare-hosted mobile dashboard to monitor live streams 
       const FLEET_NODE_DEFAULTS = [
         { id: "edge-pi-zero-01", name: "Pi Zero #1", url: "https://fleet1.capture.me.uk" },
         { id: "edge-pi-zero-02", name: "Pi Zero #2", url: "https://fleet2.capture.me.uk" },
-        { id: "edge-pi-zero-03", name: "Pi Zero #3", url: "https://fleet3.capture.me.uk" }
+        { id: "edge-pi-zero-03", name: "Pi Zero #3", url: "https://fleet3.capture.me.uk" },
+        { id: "edge-pi-zero-04", name: "Pi Zero #4", url: "https://fleet4.capture.me.uk" }
       ];
 
 
@@ -4520,7 +4521,8 @@ async function startPrebuffering() {
         const defaultTunnelMap = {
           'edge-pi-zero-01': 'https://fleet1.capture.me.uk',
           'edge-pi-zero-02': 'https://fleet2.capture.me.uk',
-          'edge-pi-zero-03': 'https://fleet3.capture.me.uk'
+          'edge-pi-zero-03': 'https://fleet3.capture.me.uk',
+          'edge-pi-zero-04': 'https://fleet4.capture.me.uk'
         };
 
         el.fleetCardsContainer.innerHTML = state.edges.map(edge => {
@@ -4656,7 +4658,8 @@ async function startPrebuffering() {
         const defaultTunnelMap = {
           'edge-pi-zero-01': 'https://fleet1.capture.me.uk',
           'edge-pi-zero-02': 'https://fleet2.capture.me.uk',
-          'edge-pi-zero-03': 'https://fleet3.capture.me.uk'
+          'edge-pi-zero-03': 'https://fleet3.capture.me.uk',
+          'edge-pi-zero-04': 'https://fleet4.capture.me.uk'
         };
         const targetUrl = (edge && edge.tunnel_url) ? edge.tunnel_url : (defaultTunnelMap[deviceId] || hubBaseUrl);
         const devLabel = (edge && edge.device_name) ? edge.device_name : deviceId;
@@ -4708,7 +4711,8 @@ async function startPrebuffering() {
         const devices = [
           { name: 'Pi #1', url: 'https://fleet1.capture.me.uk' },
           { name: 'Pi #2', url: 'https://fleet2.capture.me.uk' },
-          { name: 'Pi #3', url: 'https://fleet3.capture.me.uk' }
+          { name: 'Pi #3', url: 'https://fleet3.capture.me.uk' },
+          { name: 'Pi #4', url: 'https://fleet4.capture.me.uk' }
         ];
         state.edges.forEach(e => {
           if (e.tunnel_url && !devices.some(d => d.url === e.tunnel_url)) {
